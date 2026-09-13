@@ -8,6 +8,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -29,9 +30,10 @@ jobs:
             clang \
             llvm \
             lld \
-            build-essential
+            build-essential \
+            dpkg
 
-      - name: Install roothide Theos
+      - name: Install Roothide Theos
         shell: bash
         run: |
           set -euxo pipefail
@@ -51,9 +53,10 @@ jobs:
           echo "THEOS=$THEOS" >> "$GITHUB_ENV"
 
           echo "=== Theos ==="
+          test -d "$THEOS"
           ls -la "$THEOS"
 
-      - name: Install iOS 16.5 SDK
+      - name: Install iPhoneOS 16.5 SDK
         shell: bash
         run: |
           set -euxo pipefail
@@ -62,23 +65,18 @@ jobs:
 
           mkdir -p "$THEOS/sdks"
 
+          SDK_URL="https://github.com/theos/sdks/releases/latest/download/iPhoneOS16.5.sdk.tar.xz"
+
           cd /tmp
 
-          rm -rf theos-sdks
+          rm -f iPhoneOS16.5.sdk.tar.xz
+          rm -rf iPhoneOS16.5.sdk
 
-          git clone \
-            --depth=1 \
-            --filter=tree:0 \
-            --no-checkout \
-            https://github.com/theos/sdks.git \
-            theos-sdks
+          curl -fL \
+            "$SDK_URL" \
+            -o iPhoneOS16.5.sdk.tar.xz
 
-          cd theos-sdks
-
-          git sparse-checkout init --cone
-          git sparse-checkout set iPhoneOS16.5.sdk
-
-          git checkout
+          tar -xJf iPhoneOS16.5.sdk.tar.xz
 
           test -d iPhoneOS16.5.sdk
 
@@ -89,88 +87,16 @@ jobs:
             "$THEOS/sdks/"
 
           echo "=== Installed SDK ==="
-          ls -ld "$THEOS/sdks/iPhoneOS16.5.sdk"
 
-      - name: Detect Theos toolchain
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          export THEOS="$HOME/theos"
-
-          echo "=== Searching for clang ==="
-
-          find "$THEOS/toolchain" \
-            -type f \
-            \( -name clang -o -name clang++ \) \
-            -print \
-            2>/dev/null || true
-
-          echo "=== Theos toolchain directories ==="
-
-          find "$THEOS/toolchain" \
-            -maxdepth 4 \
+          find "$THEOS/sdks" \
+            -maxdepth 1 \
             -type d \
-            -print \
-            2>/dev/null || true
+            -name "*.sdk" \
+            -print
 
-          echo "=== System clang ==="
-          command -v clang
-          command -v clang++
+          test -d "$THEOS/sdks/iPhoneOS16.5.sdk"
 
-          clang --version
-          clang++ --version
-
-      - name: Configure Theos compiler
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          export THEOS="$HOME/theos"
-
-          TOOLCHAIN_ROOT="$THEOS/toolchain"
-
-          echo "THEOS=$THEOS"
-
-          echo "=== Looking for Theos compiler ==="
-
-          THEOS_CLANG="$(find "$TOOLCHAIN_ROOT" \
-            -type f \
-            -name clang \
-            -perm -111 \
-            -print \
-            2>/dev/null | head -n 1 || true)"
-
-          THEOS_CLANGXX="$(find "$TOOLCHAIN_ROOT" \
-            -type f \
-            -name clang++ \
-            -perm -111 \
-            -print \
-            2>/dev/null | head -n 1 || true)"
-
-          if [ -n "$THEOS_CLANG" ] && [ -n "$THEOS_CLANGXX" ]; then
-            echo "Found Theos clang:"
-            echo "$THEOS_CLANG"
-            echo "$THEOS_CLANGXX"
-
-            TOOLCHAIN_BIN="$(dirname "$THEOS_CLANG")"
-
-            echo "THEOS_TOOLCHAIN_BIN=$TOOLCHAIN_BIN" >> "$GITHUB_ENV"
-
-            echo "PATH=$TOOLCHAIN_BIN:$PATH" >> "$GITHUB_ENV"
-
-            echo "TARGET=iphone:clang:16.5:16.0" >> "$GITHUB_ENV"
-          else
-            echo "Theos-specific clang was not found."
-            echo "Using system LLVM compiler."
-
-            echo "THEOS_TOOLCHAIN_BIN=/usr/bin" >> "$GITHUB_ENV"
-            echo "PATH=/usr/bin:$PATH" >> "$GITHUB_ENV"
-
-            echo "TARGET=iphone:clang:16.5:16.0" >> "$GITHUB_ENV"
-          fi
-
-      - name: Verify toolchain
+      - name: Verify Roothide Theos
         shell: bash
         run: |
           set -euxo pipefail
@@ -180,33 +106,30 @@ jobs:
           echo "=== THEOS ==="
           echo "$THEOS"
 
-          echo "=== PATH ==="
-          echo "$PATH"
-
           echo "=== SDK ==="
+
+          find "$THEOS/sdks" \
+            -maxdepth 1 \
+            -type d \
+            -name "*.sdk" \
+            -print
+
           test -d "$THEOS/sdks/iPhoneOS16.5.sdk"
-          ls -ld "$THEOS/sdks/iPhoneOS16.5.sdk"
+
+          echo "=== Roothide package scheme ==="
+
+          test -d "$THEOS/vendor/mod/roothide"
+
+          ls -la \
+            "$THEOS/vendor/mod/roothide"
 
           echo "=== Compiler ==="
+
           command -v clang
           command -v clang++
 
           clang --version
           clang++ --version
-
-          echo "=== Theos ==="
-          test -d "$THEOS/makefiles"
-          test -d "$THEOS/vendor"
-
-          echo "=== Roothide module ==="
-
-          if [ -d "$THEOS/vendor/mod/roothide" ]; then
-            ls -ld "$THEOS/vendor/mod/roothide"
-          else
-            echo "Roothide module directory not found."
-            echo "Checking vendor:"
-            find "$THEOS/vendor" -maxdepth 3 -type d -print 2>/dev/null || true
-          fi
 
       - name: Build
         shell: bash
@@ -215,10 +138,11 @@ jobs:
 
           export THEOS="$HOME/theos"
 
+          export TARGET="iphone:clang:16.5:16.0"
+
           echo "=== Build environment ==="
           echo "THEOS=$THEOS"
           echo "TARGET=$TARGET"
-          echo "THEOS_TOOLCHAIN_BIN=${THEOS_TOOLCHAIN_BIN:-}"
 
           make clean
 
@@ -238,9 +162,17 @@ jobs:
             -name "*.deb" \
             -print
 
-          test -n "$(find packages -type f -name '*.deb' -print -quit)"
+          DEB="$(find packages \
+            -type f \
+            -name "*.deb" \
+            -print \
+            -quit)"
 
-          dpkg-deb -I packages/*.deb
+          test -n "$DEB"
+
+          echo "DEB=$DEB"
+
+          dpkg-deb -I "$DEB"
 
       - name: Upload DEB
         uses: actions/upload-artifact@v4
