@@ -3,6 +3,7 @@ name: Build ScreenScale16
 on:
   workflow_dispatch:
 
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -19,18 +20,18 @@ jobs:
       - name: Install Theos
         run: |
           git clone --recursive https://github.com/theos/theos.git /home/runner/theos
-          export THEOS=/home/runner/theos
-          echo "THEOS=$THEOS" >> "$GITHUB_ENV"
+          echo "THEOS=/home/runner/theos" >> "$GITHUB_ENV"
 
       - name: Build
         run: |
           set -euxo pipefail
+          export THEOS=/home/runner/theos
           make clean
-          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=roothide
+          make package FINALPACKAGE=1
 
       - name: Upload package
         uses: actions/upload-artifact@v4
         with:
-          name: ScreenScale16-roothide
+          name: ScreenScale16
           path: packages/*
           if-no-files-found: error
