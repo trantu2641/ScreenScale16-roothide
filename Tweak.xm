@@ -1,5 +1,4 @@
 #import <UIKit/UIKit.h>
-#import <QuartzCore/QuartzCore.h>
 
 #pragma mark - Configuration
 
@@ -15,17 +14,18 @@
  *   34px bên phải
  *
  * Đây là SCALE toàn bộ UI.
- * Không dùng mask để che màn hình.
+ * Không dùng mask/crop layer.
  */
 
 static CGFloat const SC16_CROP = 34.0;
-static CGFloat const SC16_SCALE_EPSILON = 0.0001;
+static CGFloat const SC16_EPSILON = 0.0001;
 
 #pragma mark - Enable
 
 static BOOL SC16Enabled(void)
 {
-    NSString *version = UIDevice.currentDevice.systemVersion;
+    NSString *version =
+        UIDevice.currentDevice.systemVersion;
 
     return [version hasPrefix:@"16."];
 }
@@ -43,10 +43,11 @@ static BOOL SC16ShouldSkipWindow(UIWindow *window)
     if (window.alpha <= 0.0)
         return YES;
 
-    NSString *name = NSStringFromClass(window.class);
+    NSString *name =
+        NSStringFromClass(window.class);
 
     /*
-     * Keyboard
+     * Không scale keyboard.
      */
     if ([name containsString:@"UITextEffectsWindow"])
         return YES;
@@ -61,9 +62,8 @@ static BOOL SC16ShouldSkipWindow(UIWindow *window)
         return YES;
 
     /*
-     * Status bar window.
-     *
-     * Status Bar được xử lý riêng bằng
+     * Không scale Status Bar window.
+     * Status Bar được ẩn riêng bằng
      * prefersStatusBarHidden.
      */
     if ([name containsString:@"StatusBar"])
@@ -72,57 +72,7 @@ static BOOL SC16ShouldSkipWindow(UIWindow *window)
     if ([name containsString:@"_UIStatusBar"])
         return YES;
 
-    /*
-     * Một số window hệ thống không nên transform.
-     */
-    if ([name containsString:@"UITextEffects"])
-        return YES;
-
-    if ([name containsString:@"UIRemoteKeyboard"])
-        return YES;
-
     return NO;
-}
-
-#pragma mark - Scale State
-
-/*
- * Lưu trạng thái transform riêng cho từng UIWindow.
- *
- * Không dùng associated object phức tạp để tránh
- * tạo thêm dependency/runtime hook không cần thiết.
- */
-
-static NSHashTable *SC16ScaledWindows(void)
-{
-    static NSHashTable *table = nil;
-
-    static dispatch_once_t onceToken;
-
-    dispatch_once(&onceToken, ^{
-        table = [NSHashTable
-                 weakObjectsHashTable];
-    });
-
-    return table;
-}
-
-static BOOL SC16WindowWasScaled(UIWindow *window)
-{
-    if (!window)
-        return NO;
-
-    return [SC16ScaledWindows()
-            containsObject:window];
-}
-
-static void SC16MarkWindowScaled(UIWindow *window)
-{
-    if (!window)
-        return;
-
-    [SC16ScaledWindows()
-        addObject:window];
 }
 
 #pragma mark - Apply Scale
@@ -141,12 +91,14 @@ static void SC16ApplyScale(UIWindow *window)
     if (!root)
         return;
 
-    UIView *view = root.view;
+    UIView *view =
+        root.view;
 
     if (!view)
         return;
 
-    CGRect bounds = window.bounds;
+    CGRect bounds =
+        window.bounds;
 
     CGFloat width =
         CGRectGetWidth(bounds);
@@ -160,6 +112,10 @@ static void SC16ApplyScale(UIWindow *window)
         return;
     }
 
+    /*
+     * Lấy orientation dựa trên kích thước
+     * thực tế của window.
+     */
     BOOL portrait =
         (height > width);
 
@@ -208,8 +164,11 @@ static void SC16ApplyScale(UIWindow *window)
     }
 
     /*
-     * Nếu kích thước/orientation không thay đổi
-     * thì không apply lại transform.
+     * Nếu transform hiện tại đã đúng scale
+     * thì không apply lại.
+     *
+     * Điều này cũng giúp tránh transform
+     * chồng lên nhau.
      */
     CGAffineTransform current =
         view.transform;
@@ -226,33 +185,32 @@ static void SC16ApplyScale(UIWindow *window)
             current.d * current.d
         );
 
-    if (fabs(currentScaleX - scale)
-            < SC16_SCALE_EPSILON &&
-        fabs(currentScaleY - scale)
-            < SC16_SCALE_EPSILON)
+    if (fabs(currentScaleX - scale) <
+            SC16_EPSILON &&
+        fabs(currentScaleY - scale) <
+            SC16_EPSILON)
     {
-        SC16MarkWindowScaled(window);
         return;
     }
 
     /*
-     * Giữ nguyên tâm của UI.
+     * Giữ nguyên tâm UI.
      *
      * Không dịch UI lên/xuống.
      * Không dịch UI trái/phải.
      */
-    CGPoint center = view.center;
+    CGPoint center =
+        view.center;
 
     /*
      * Reset transform trước khi tính lại.
-     *
-     * Quan trọng khi xoay portrait <-> landscape.
+     * Quan trọng khi xoay Portrait/Landscape.
      */
     view.transform =
         CGAffineTransformIdentity;
 
     /*
-     * SCALE thu nhỏ toàn bộ root UI.
+     * SCALE toàn bộ root UI.
      */
     view.transform =
         CGAffineTransformMakeScale(
@@ -261,14 +219,13 @@ static void SC16ApplyScale(UIWindow *window)
         );
 
     /*
-     * Giữ vị trí trung tâm.
+     * Giữ tâm.
      */
-    view.center = center;
-
-    SC16MarkWindowScaled(window);
+    view.center =
+        center;
 }
 
-#pragma mark - Apply Window Safely
+#pragma mark - Safe Apply
 
 static void SC16ApplyWindowSafely(UIWindow *window)
 {
@@ -278,9 +235,6 @@ static void SC16ApplyWindowSafely(UIWindow *window)
     if (!window)
         return;
 
-    /*
-     * Chỉ chạy khi UIKit đã hoàn thành layout.
-     */
     dispatch_async(
         dispatch_get_main_queue(),
         ^{
@@ -295,7 +249,7 @@ static void SC16ApplyWindowSafely(UIWindow *window)
     );
 }
 
-#pragma mark - Apply All Application Windows
+#pragma mark - Apply All Windows
 
 static void SC16ApplyAllWindows(void)
 {
@@ -342,17 +296,13 @@ static void SC16ApplyAllWindows(void)
     }
 }
 
-#pragma mark - Orientation
+#pragma mark - Rotation
 
 static void SC16OrientationChanged(void)
 {
     if (!SC16Enabled())
         return;
 
-    /*
-     * Khi xoay màn hình, UIKit thay đổi bounds
-     * rồi mới tính lại scale.
-     */
     dispatch_async(
         dispatch_get_main_queue(),
         ^{
@@ -383,9 +333,6 @@ static void SC16OrientationChanged(void)
     if (!SC16Enabled())
         return;
 
-    /*
-     * Đợi root view được tạo/layout xong.
-     */
     dispatch_async(
         dispatch_get_main_queue(),
         ^{
@@ -396,7 +343,7 @@ static void SC16OrientationChanged(void)
 
 %end
 
-#pragma mark - UIViewController
+#pragma mark - Status Bar
 
 %hook UIViewController
 
@@ -404,7 +351,7 @@ static void SC16OrientationChanged(void)
  * Chỉ ẩn Status Bar.
  *
  * Không ẩn Home Bar.
- * Không transform UIViewController ở đây.
+ * Không transform UIViewController ở hook này.
  */
 - (BOOL)prefersStatusBarHidden
 {
@@ -416,28 +363,7 @@ static void SC16OrientationChanged(void)
 
 %end
 
-#pragma mark - UIApplication
-
-%hook UIApplication
-
-- (void)_didFinishLaunching
-{
-    %orig;
-
-    if (!SC16Enabled())
-        return;
-
-    dispatch_async(
-        dispatch_get_main_queue(),
-        ^{
-            SC16ApplyAllWindows();
-        }
-    );
-}
-
-%end
-
-#pragma mark - Rotation Notification
+#pragma mark - Constructor
 
 %ctor
 {
@@ -447,20 +373,19 @@ static void SC16OrientationChanged(void)
             return;
 
         /*
-         * Không apply ngay trong constructor.
-         *
-         * Tránh đụng UIKit quá sớm.
+         * Không đụng UIKit ngay lập tức trong
+         * constructor.
          */
         dispatch_async(
             dispatch_get_main_queue(),
             ^{
                 /*
-                 * UIKit đã khởi tạo.
+                 * Apply sau khi UIKit đã khởi tạo.
                  */
                 SC16ApplyAllWindows();
 
                 /*
-                 * Cho layout ổn định rồi apply lần nữa.
+                 * Apply lại sau khi layout ổn định.
                  */
                 dispatch_after(
                     dispatch_time(
@@ -483,9 +408,10 @@ static void SC16OrientationChanged(void)
                     addObserverForName:
                         UIDeviceOrientationDidChangeNotification
                     object:nil
-                    queue:[NSOperationQueue mainQueue]
+                    queue:
+                        [NSOperationQueue mainQueue]
                     usingBlock:
-                    ^(NSNotification *notification)
+                        ^(NSNotification *notification)
                     {
                         (void)notification;
 
