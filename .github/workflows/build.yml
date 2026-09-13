@@ -3,6 +3,7 @@ name: Build ScreenScale16-roothide
 on:
   workflow_dispatch:
 
+
 jobs:
   build:
     runs-on: macos-latest
@@ -11,29 +12,42 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Theos
-        uses: waruhachi/theos-action@v2.4.10
-        with:
-          theos-src: 'waruhachi/theos'
-          theos-branch: 'main'
-          sdks-src: 'waruhachi/sdks'
-          sdks-branch: 'main'
-
-      - name: Install dm.pl
+      - name: Install Theos
         run: |
-          git clone --depth 1 https://github.com/theos/dm.pl.git "$HOME/dm.pl"
-          chmod +x "$HOME/dm.pl/dm.pl"
-          mkdir -p "$THEOS/bin"
-          cp "$HOME/dm.pl/dm.pl" "$THEOS/bin/dm.pl"
+          set -euxo pipefail
 
-      - name: Build
+          export THEOS="$HOME/theos"
+
+          git clone --recursive --depth 1 \
+            https://github.com/theos/theos.git \
+            "$THEOS"
+
+          echo "THEOS=$THEOS" >> "$GITHUB_ENV"
+
+      - name: Install SDK
         run: |
+          set -euxo pipefail
+
+          export THEOS="$HOME/theos"
+
+          git clone --depth 1 \
+            https://github.com/theos/sdks.git \
+            "$THEOS/sdks"
+
+      - name: Build roothide package
+        run: |
+          set -euxo pipefail
+
+          export THEOS="$HOME/theos"
+
           make clean
-          make package FINALPACKAGE=1
 
-      - name: Upload DEB
+          make package FINALPACKAGE=1 \
+            THEOS_PACKAGE_SCHEME=roothide
+
+      - name: Upload package
         uses: actions/upload-artifact@v4
         with:
           name: ScreenScale16-roothide
-          path: packages/*.deb
+          path: packages/*
           if-no-files-found: error
