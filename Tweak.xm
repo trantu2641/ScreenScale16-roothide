@@ -1,535 +1,327 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
-#import <objc/message.h>
+#import <objc/runtime.h>
+#import <substrate.h>
+#import <math.h>
 
 #pragma mark - Configuration
 
 /*
- * ScreenScale16
- *
- * 90% UI.
+ * Keep the original OneHand-style mechanism:
+ * scale the root view, not UIWindow itself.
  */
 static CGFloat const SC16_SCALE = 0.90;
 
 /*
- * Cắt 8px ở vùng hiển thị cuối cùng.
- *
- * Không phải tăng/giảm scale.
+ * Physical crop in the final screen space.
+ * Portrait: top/bottom.
+ * Landscape: left/right.
  */
 static CGFloat const SC16_CROP = 8.0;
 
-
 #pragma mark - Process
 
-static BOOL SC16Enabled(void)
+static BOOL SC16IsEnabled(void)
 {
-    return [UIDevice.currentDevice.systemVersion
-            hasPrefix:@"16."];
+    NSString *version = UIDevice.currentDevice.systemVersion;
+    return [version hasPrefix:@"16."];
 }
 
 static BOOL SC16IsSpringBoard(void)
 {
-    NSString *bundleID =
-        NSBundle.mainBundle.bundleIdentifier;
-
-    return [bundleID isEqualToString:
-                @"com.apple.springboard"];
+    NSString *bundleID = NSBundle.mainBundle.bundleIdentifier;
+    return [bundleID isEqualToString:@"com.apple.springboard"];
 }
 
+#pragma mark - Window detection
 
-#pragma mark - Window
-
-static BOOL SC16IsRootSceneWindow(UIWindow *window)
-{
-    if (!window)
-        return NO;
-
-    return [NSStringFromClass(window.class)
-            isEqualToString:@"UIRootSceneWindow"];
-}
-
-static BOOL SC16IsKeyboardWindow(UIWindow *window)
+static BOOL SC16IsExcludedWindow(UIWindow *window)
 {
     if (!window)
         return YES;
 
-    NSString *name =
-        NSStringFromClass(window.class);
+    NSString *name = NSStringFromClass(window.class);
 
-    if ([name containsString:@"Keyboard"])
-        return YES;
+    static NSArray<NSString *> *excluded;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        excluded = @[
+            @"UITextEffectsWindow",
+            @"UIRemoteKeyboardWindow",
+            @"KeyboardWindow",
+            @"Keyboard",
+            @"StatusBar",
+            @"_UIStatusBar",
+            @"UITextEffects"
+        ];
+    });
 
-    if ([name containsString:@"UITextEffects"])
-        return YES;
-
-    if ([name containsString:@"UIRemoteKeyboard"])
-        return YES;
+    for (NSString *item in excluded)
+    {
+        if ([name containsString:item])
+            return YES;
+    }
 
     return NO;
 }
 
-
-#pragma mark - OneHand-style Window Discovery
-
-/*
- * OneHandWizard2 sử dụng:
- *
- * +[UIWindow allWindowsIncludingInternalWindows:
- *                 onlyVisibleWindows:]
- *
- * Đây là điểm khác biệt quan trọng so với bản cũ
- * chỉ quét connectedScenes.
- */
-static NSArray<UIWindow *> *SC16AllInternalWindows(void)
+static UIWindow *SC16FindTargetWindow(void)
 {
-    Class windowClass =
-        [UIWindow class];
-
-    SEL selector =
-        NSSelectorFromString(
-            @"allWindowsIncludingInternalWindows:onlyVisibleWindows:"
-        );
-
-    if (![windowClass
-          respondsToSelector:selector])
-    {
-        return nil;
-    }
-
-    typedef NSArray *(*SC16WindowListFn)(
-        id,
-        SEL,
-        BOOL,
-        BOOL
-    );
-
-    SC16WindowListFn fn =
-        (SC16WindowListFn)
-        objc_msgSend;
-
-    return fn(
-        windowClass,
-        selector,
-        YES,
-        NO
-    );
-}
-
-
-/*
- * Lấy tất cả UIRootSceneWindow.
- *
- * Root + background đều được xử lý cùng một
- * transform để không bị tách layer.
- */
-static NSArray<UIWindow *> *SC16RootWindows(void)
-{
-    NSArray<UIWindow *> *windows =
-        SC16AllInternalWindows();
-
-    if (!windows)
+    UIApplication *application = UIApplication.sharedApplication;
+    if (!application)
         return nil;
 
-    NSMutableArray<UIWindow *> *result =
-        [NSMutableArray array];
+    UIWindow *fallback = nil;
 
-    for (UIWindow *window in windows)
+    for (UIScene *scene in application.connectedScenes)
     {
-        if (!window)
+        if (![scene isKindOfClass:UIWindowScene.class])
             continue;
 
-        if (window.hidden)
+        UIWindowScene *windowScene = (UIWindowScene *)scene;
+
+        if (windowScene.activationState == UISceneActivationStateUnattached)
             continue;
 
-        if (window.alpha <= 0.0)
-            continue;
+        for (UIWindow *window in windowScene.windows)
+        {
+            if (!window || window.hidden || window.alpha <= 0.0)
+                continue;
 
-        if (SC16IsKeyboardWindow(window))
-            continue;
+            if (SC16IsExcludedWindow(window))
+                continue;
 
-        if (!SC16IsRootSceneWindow(window))
-            continue;
+            if (!window.rootViewController)
+                continue;
 
-        [result addObject:window];
+            /*
+             * UIRootSceneWindow is the same root-window class used by
+             * OneHandWizard. Prefer it, but retain a safe fallback.
+             */
+            if ([NSStringFromClass(window.class)
+                    isEqualToString:@"UIRootSceneWindow"])
+            {
+                return window;
+            }
+
+            if (!fallback)
+                fallback = window;
+        }
     }
 
-    return result;
+    return fallback;
 }
 
-
-#pragma mark - Layer Geometry
-
-/*
- * Đưa anchor về đúng giữa layer mà không làm
- * nội dung nhảy vị trí.
- *
- * Không sử dụng:
- *
- *   window.frame
- *   window.center
- *   window.bounds
- *
- * để tạo vị trí mới.
- */
-static void SC16CenterAnchor(
-    CALayer *layer
-)
-{
-    if (!layer)
-        return;
-
-    CGPoint oldAnchor =
-        layer.anchorPoint;
-
-    CGPoint newAnchor =
-        CGPointMake(0.5, 0.5);
-
-    if (fabs(oldAnchor.x - newAnchor.x) < 0.0001 &&
-        fabs(oldAnchor.y - newAnchor.y) < 0.0001)
-    {
-        return;
-    }
-
-    CGRect bounds =
-        layer.bounds;
-
-    CGPoint oldPosition =
-        layer.position;
-
-    CGFloat dx =
-        (newAnchor.x - oldAnchor.x) *
-        CGRectGetWidth(bounds);
-
-    CGFloat dy =
-        (newAnchor.y - oldAnchor.y) *
-        CGRectGetHeight(bounds);
-
-    /*
-     * Giữ nguyên vị trí hiển thị khi đổi anchor.
-     */
-    layer.anchorPoint =
-        newAnchor;
-
-    layer.position =
-        CGPointMake(
-            oldPosition.x + dx,
-            oldPosition.y + dy
-        );
-}
-
-
-#pragma mark - Scale
+#pragma mark - Geometry
 
 /*
- * Scale theo đúng kiểu OneHand:
- *
- *   CGAffineTransformMakeScale
- *              ↓
- *   CATransform3DMakeAffineTransform
- *              ↓
- *   rootWindow.layer.transform
- *
- * Không dùng window.transform.
+ * Exact OneHand-style transform:
+ * the root view is scaled around its own center and the center is
+ * explicitly restored before the transform is applied.
  */
-static void SC16ApplyScaleToLayer(
-    CALayer *layer
-)
+static void SC16ApplyScaleToRootView(UIView *rootView)
 {
-    if (!layer)
+    if (!rootView)
         return;
 
-    CGFloat scale =
-        SC16_SCALE;
+    UIView *superview = rootView.superview;
+    if (!superview)
+        return;
 
-    if (scale <= 0.0 ||
-        scale > 1.0)
-    {
+    CGRect bounds = rootView.bounds;
+    CGFloat width = CGRectGetWidth(bounds);
+    CGFloat height = CGRectGetHeight(bounds);
+
+    if (width <= 0.0 || height <= 0.0)
+        return;
+
+    CGFloat scale = SC16_SCALE;
+    if (scale <= 0.0 || scale > 1.0)
         scale = 1.0;
+
+    /*
+     * Never use frame after applying a transform.
+     * Reset first so repeated refreshes cannot compound transforms.
+     */
+    rootView.transform = CGAffineTransformIdentity;
+
+    /*
+     * Match OneHand's anchor-point behavior while preserving the
+     * current visual position when UIKit gives us a non-standard anchor.
+     */
+    CALayer *layer = rootView.layer;
+    if (layer)
+    {
+        CGPoint oldAnchor = layer.anchorPoint;
+        if (fabs(oldAnchor.x - 0.5) > 0.0001 ||
+            fabs(oldAnchor.y - 0.5) > 0.0001)
+        {
+            CGPoint oldPosition = layer.position;
+            CGPoint newPosition = CGPointMake(
+                oldPosition.x + (0.5 - oldAnchor.x) * layer.bounds.size.width,
+                oldPosition.y + (0.5 - oldAnchor.y) * layer.bounds.size.height
+            );
+            layer.anchorPoint = CGPointMake(0.5, 0.5);
+            layer.position = newPosition;
+        }
     }
 
     /*
-     * OneHand giữ anchor ở giữa.
+     * Center in the actual superview coordinate space.
+     * This is the important correction: do not center UIWindow itself,
+     * and do not derive the position from UIScreen.mainScreen.bounds.
      */
-    SC16CenterAnchor(layer);
+    CGPoint superCenter = CGPointMake(
+        CGRectGetMidX(superview.bounds),
+        CGRectGetMidY(superview.bounds)
+    );
 
-    if (fabs(scale - 1.0) < 0.0001)
+    rootView.center = superCenter;
+
+    if (fabs(scale - 1.0) > 0.0001)
     {
-        layer.transform =
-            CATransform3DIdentity;
-
-        return;
+        rootView.transform = CGAffineTransformMakeScale(scale, scale);
     }
-
-    CGAffineTransform affine =
-        CGAffineTransformMakeScale(
-            scale,
-            scale
-        );
-
-    CATransform3D transform =
-        CATransform3DMakeAffineTransform(
-            affine
-        );
-
-    layer.transform =
-        transform;
 }
 
-
-#pragma mark - Crop
+#pragma mark - Crop / clipping
 
 /*
- * Crop 8px thực tế sau scale.
- *
- * Source crop:
- *
- *   8 / 0.90
- *   = 8.888888...
- *
- * Như vậy sau khi layer scale 90%,
- * vùng bị cắt tương đương 8px.
+ * Clip the already-scaled root view in its own coordinate system.
+ * The mask is deliberately installed on the root VIEW layer, not on
+ * UIWindow, so wallpaper/system windows cannot become displaced.
  */
-static void SC16ApplyCropToLayer(
-    CALayer *layer
-)
+static void SC16ApplyCrop(UIView *rootView)
 {
+    if (!rootView)
+        return;
+
+    CALayer *layer = rootView.layer;
     if (!layer)
         return;
 
-    CGRect bounds =
-        layer.bounds;
+    CGRect bounds = layer.bounds;
+    CGFloat width = CGRectGetWidth(bounds);
+    CGFloat height = CGRectGetHeight(bounds);
 
-    CGFloat width =
-        CGRectGetWidth(bounds);
-
-    CGFloat height =
-        CGRectGetHeight(bounds);
-
-    if (width <= 0.0 ||
-        height <= 0.0)
-    {
+    if (width <= 0.0 || height <= 0.0)
         return;
-    }
 
-    CGFloat crop =
-        SC16_CROP / SC16_SCALE;
+    CGFloat crop = SC16_CROP / SC16_SCALE;
+    BOOL portrait = height > width;
 
-    CGRect visible =
-        bounds;
+    CGRect visible = bounds;
 
-    /*
-     * Crop theo hướng màn hình.
-     *
-     * Portrait:
-     *   trên + dưới
-     *
-     * Landscape:
-     *   trái + phải
-     */
-    if (height > width)
+    if (portrait)
     {
-        visible.origin.y += crop;
-
-        visible.size.height -=
-            crop * 2.0;
+        CGFloat maxCrop = MAX(0.0, (height - 1.0) * 0.5);
+        crop = MIN(crop, maxCrop);
+        visible = CGRectInset(bounds, 0.0, crop);
     }
     else
     {
-        visible.origin.x += crop;
-
-        visible.size.width -=
-            crop * 2.0;
-    }
-
-    if (visible.size.width <= 0.0 ||
-        visible.size.height <= 0.0)
-    {
-        return;
+        CGFloat maxCrop = MAX(0.0, (width - 1.0) * 0.5);
+        crop = MIN(crop, maxCrop);
+        visible = CGRectInset(bounds, crop, 0.0);
     }
 
     CAShapeLayer *mask = nil;
 
-    if ([layer.mask
-         isKindOfClass:
-             [CAShapeLayer class]])
-    {
-        mask =
-            (CAShapeLayer *)layer.mask;
-    }
+    if ([layer.mask isKindOfClass:CAShapeLayer.class])
+        mask = (CAShapeLayer *)layer.mask;
     else
     {
-        mask =
-            [CAShapeLayer layer];
-
-        layer.mask =
-            mask;
+        mask = [CAShapeLayer layer];
+        layer.mask = mask;
     }
 
-    mask.frame =
-        bounds;
+    mask.frame = bounds;
 
-    CGPathRef path =
-        CGPathCreateWithRect(
-            visible,
-            NULL
-        );
-
-    mask.path =
-        path;
-
+    CGPathRef path = CGPathCreateWithRect(visible, NULL);
+    mask.path = path;
     CGPathRelease(path);
 }
 
 
-#pragma mark - Apply Root Windows
+#pragma mark - Apply
 
-static void SC16ApplyWindow(
-    UIWindow *window
-)
+static void SC16ApplyNow(void)
 {
+    if (!SC16IsEnabled() || !SC16IsSpringBoard())
+        return;
+
+    UIWindow *window = SC16FindTargetWindow();
     if (!window)
         return;
 
-    if (!SC16IsRootSceneWindow(window))
+    UIViewController *rootVC = window.rootViewController;
+    UIView *rootView = rootVC.view;
+    if (!rootView)
         return;
 
-    if (SC16IsKeyboardWindow(window))
-        return;
+    /* Make sure the view hierarchy has completed layout first. */
+    [rootView layoutIfNeeded];
 
-    CALayer *layer =
-        window.layer;
-
-    if (!layer)
-        return;
-
-    /*
-     * Không đụng:
-     *
-     *   frame
-     *   bounds
-     *   center
-     *   rotation
-     *   window.transform
-     *
-     * Chỉ render layer.
-     */
-    SC16ApplyScaleToLayer(layer);
-
-    SC16ApplyCropToLayer(layer);
+    SC16ApplyScaleToRootView(rootView);
+    SC16ApplyCrop(rootView);
 }
 
-
-static void SC16ApplyAllRootWindows(void)
-{
-    if (!SC16Enabled())
-        return;
-
-    if (!SC16IsSpringBoard())
-        return;
-
-    NSArray<UIWindow *> *windows =
-        SC16RootWindows();
-
-    if (!windows)
-        return;
-
-    /*
-     * Scale ROOT + BACKGROUND cùng một tỷ lệ.
-     *
-     * Đây là phần nhằm tránh:
-     *
-     * UI một chỗ
-     * wallpaper một chỗ
-     * background một chỗ
-     */
-    for (UIWindow *window in windows)
-    {
-        SC16ApplyWindow(window);
-    }
-}
-
-
-#pragma mark - Safe Scheduling
+#pragma mark - Scheduling
 
 static void SC16ScheduleApply(void)
 {
-    if (!SC16Enabled())
-        return;
-
-    if (!SC16IsSpringBoard())
+    if (!SC16IsEnabled() || !SC16IsSpringBoard())
         return;
 
     static BOOL scheduled = NO;
-
     if (scheduled)
         return;
 
     scheduled = YES;
 
-    dispatch_async(
-        dispatch_get_main_queue(),
-        ^{
-            scheduled = NO;
-
-            SC16ApplyAllRootWindows();
-        }
-    );
+    dispatch_async(dispatch_get_main_queue(), ^{
+        scheduled = NO;
+        SC16ApplyNow();
+    });
 }
 
+#pragma mark - Hooks
 
-#pragma mark - UIWindow Hooks
-
-%hook UIWindow
-
-- (void)makeKeyAndVisible
+static void (*SC16OrigWindowMakeKeyAndVisible)(UIWindow *, SEL);
+static void SC16WindowMakeKeyAndVisible(UIWindow *self, SEL _cmd)
 {
-    %orig;
-
-    if (!SC16Enabled())
-        return;
-
-    if (!SC16IsSpringBoard())
-        return;
-
+    SC16OrigWindowMakeKeyAndVisible(self, _cmd);
     SC16ScheduleApply();
 }
 
-- (void)setHidden:(BOOL)hidden
+static void (*SC16OrigWindowSetRootViewController)(UIWindow *, SEL, UIViewController *);
+static void SC16WindowSetRootViewController(UIWindow *self, SEL _cmd, UIViewController *vc)
 {
-    %orig(hidden);
+    SC16OrigWindowSetRootViewController(self, _cmd, vc);
+    SC16ScheduleApply();
+}
 
-    if (!SC16Enabled())
-        return;
-
-    if (!SC16IsSpringBoard())
-        return;
-
+static void (*SC16OrigWindowSetHidden)(UIWindow *, SEL, BOOL);
+static void SC16WindowSetHidden(UIWindow *self, SEL _cmd, BOOL hidden)
+{
+    SC16OrigWindowSetHidden(self, _cmd, hidden);
     if (!hidden)
         SC16ScheduleApply();
 }
 
-%end
-
-
-#pragma mark - UIWindowScene Hooks
-
-%hook UIWindowScene
-
-- (void)sceneDidBecomeActive
+static void (*SC16OrigWindowSetBounds)(UIWindow *, SEL, CGRect);
+static void SC16WindowSetBounds(UIWindow *self, SEL _cmd, CGRect bounds)
 {
-    %orig;
-
-    if (!SC16Enabled())
-        return;
-
-    if (!SC16IsSpringBoard())
-        return;
-
+    SC16OrigWindowSetBounds(self, _cmd, bounds);
     SC16ScheduleApply();
 }
 
-%end
-
+static void (*SC16OrigViewDidAppear)(UIViewController *, SEL, BOOL);
+static void SC16ViewDidAppear(UIViewController *self, SEL _cmd, BOOL animated)
+{
+    SC16OrigViewDidAppear(self, _cmd, animated);
+    SC16ScheduleApply();
+}
 
 #pragma mark - Constructor
 
@@ -537,32 +329,62 @@ static void SC16ScheduleApply(void)
 {
     @autoreleasepool
     {
-        /*
-         * Chỉ chạy iOS 16.
-         */
-        if (!SC16Enabled())
+        if (!SC16IsEnabled() || !SC16IsSpringBoard())
             return;
 
-        /*
-         * Chỉ chạy SpringBoard.
-         */
-        if (!SC16IsSpringBoard())
-            return;
+        Class windowClass = objc_getClass("UIWindow");
+        Class vcClass = objc_getClass("UIViewController");
 
-        /*
-         * Chờ UIRootSceneWindow xuất hiện.
-         */
+        if (windowClass)
+        {
+            MSHookMessageEx(
+                windowClass,
+                @selector(makeKeyAndVisible),
+                (IMP)SC16WindowMakeKeyAndVisible,
+                (IMP *)&SC16OrigWindowMakeKeyAndVisible
+            );
+
+            MSHookMessageEx(
+                windowClass,
+                @selector(setRootViewController:),
+                (IMP)SC16WindowSetRootViewController,
+                (IMP *)&SC16OrigWindowSetRootViewController
+            );
+
+            MSHookMessageEx(
+                windowClass,
+                @selector(setHidden:),
+                (IMP)SC16WindowSetHidden,
+                (IMP *)&SC16OrigWindowSetHidden
+            );
+
+            MSHookMessageEx(
+                windowClass,
+                @selector(setBounds:),
+                (IMP)SC16WindowSetBounds,
+                (IMP *)&SC16OrigWindowSetBounds
+            );
+        }
+
+        if (vcClass)
+        {
+            MSHookMessageEx(
+                vcClass,
+                @selector(viewDidAppear:),
+                (IMP)SC16ViewDidAppear,
+                (IMP *)&SC16OrigViewDidAppear
+            );
+        }
+
+        /* Give SpringBoard scene creation time to finish. */
         dispatch_after(
             dispatch_time(
                 DISPATCH_TIME_NOW,
-                (int64_t)(
-                    1.0 *
-                    NSEC_PER_SEC
-                )
+                (int64_t)(0.75 * NSEC_PER_SEC)
             ),
             dispatch_get_main_queue(),
             ^{
-                SC16ApplyAllRootWindows();
+                SC16ApplyNow();
             }
         );
     }
