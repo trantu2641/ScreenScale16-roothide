@@ -1,37 +1,39 @@
-name: Build ScreenScale16
+name: Build ScreenScale16-roothide
 
 on:
   workflow_dispatch:
 
-
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang make git perl python3 unzip xz-utils
+      - name: Setup Theos
+        uses: waruhachi/theos-action@v2.4.10
+        with:
+          theos-src: 'waruhachi/theos'
+          theos-branch: 'main'
+          sdks-src: 'waruhachi/sdks'
+          sdks-branch: 'main'
 
-      - name: Install Theos
+      - name: Install dm.pl
         run: |
-          git clone --recursive https://github.com/theos/theos.git /home/runner/theos
-          echo "THEOS=/home/runner/theos" >> "$GITHUB_ENV"
+          git clone --depth 1 https://github.com/theos/dm.pl.git "$HOME/dm.pl"
+          chmod +x "$HOME/dm.pl/dm.pl"
+          mkdir -p "$THEOS/bin"
+          cp "$HOME/dm.pl/dm.pl" "$THEOS/bin/dm.pl"
 
       - name: Build
         run: |
-          set -euxo pipefail
-          export THEOS=/home/runner/theos
           make clean
           make package FINALPACKAGE=1
 
-      - name: Upload package
+      - name: Upload DEB
         uses: actions/upload-artifact@v4
         with:
-          name: ScreenScale16
-          path: packages/*
+          name: ScreenScale16-roothide
+          path: packages/*.deb
           if-no-files-found: error
