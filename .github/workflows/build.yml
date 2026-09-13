@@ -2,9 +2,6 @@ name: Build ScreenScale16-roothide
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
 
 jobs:
   build:
