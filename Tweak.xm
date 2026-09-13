@@ -1,31 +1,7 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
-#import <objc/runtime.h>
 
 #pragma mark - Configuration
-
-/*
- * ScreenScale16 - Roothide
- *
- * Mục tiêu:
- *
- * Portrait:
- *   34px trên
- *   34px dưới
- *
- * Landscape:
- *   34px trái
- *   34px phải
- *
- * Đây là SCALE toàn bộ UI.
- *
- * Không:
- *   - dịch UI 10px
- *   - thay đổi frame để crop
- *   - bo góc màn hình
- *
- * UI sau khi scale luôn nằm ở GIỮA màn hình.
- */
 
 static const CGFloat SC16_MARGIN = 34.0;
 
@@ -33,7 +9,8 @@ static const CGFloat SC16_MARGIN = 34.0;
 
 static BOOL SC16Enabled(void)
 {
-    NSString *version = UIDevice.currentDevice.systemVersion;
+    NSString *version =
+        UIDevice.currentDevice.systemVersion;
 
     return [version hasPrefix:@"16."];
 }
@@ -51,11 +28,14 @@ static BOOL SC16ShouldSkipWindow(UIWindow *window)
     if (window.alpha <= 0.0)
         return YES;
 
+    if (!window.rootViewController)
+        return YES;
+
     NSString *className =
         NSStringFromClass(window.class);
 
     /*
-     * Không scale keyboard.
+     * Keyboard.
      */
     if ([className containsString:@"UITextEffectsWindow"])
         return YES;
@@ -70,7 +50,7 @@ static BOOL SC16ShouldSkipWindow(UIWindow *window)
         return YES;
 
     /*
-     * Không scale system status bar.
+     * Status bar window.
      */
     if ([className containsString:@"StatusBar"])
         return YES;
@@ -79,62 +59,15 @@ static BOOL SC16ShouldSkipWindow(UIWindow *window)
         return YES;
 
     /*
-     * Không đụng các window không có root VC.
+     * Không scale alert/system windows.
      */
-    if (!window.rootViewController)
+    if ([className containsString:@"TextEffects"])
         return YES;
 
     return NO;
 }
 
-#pragma mark - Calculate Scale
-
-static CGFloat SC16ScaleForWindow(UIWindow *window)
-{
-    CGRect bounds = window.bounds;
-
-    CGFloat width =
-        CGRectGetWidth(bounds);
-
-    CGFloat height =
-        CGRectGetHeight(bounds);
-
-    if (width <= 0.0 || height <= 0.0)
-        return 1.0;
-
-    /*
-     * Portrait:
-     *
-     * 34px trên
-     * 34px dưới
-     */
-    if (height > width)
-    {
-        CGFloat usableHeight =
-            height - (SC16_MARGIN * 2.0);
-
-        if (usableHeight <= 0.0)
-            return 1.0;
-
-        return usableHeight / height;
-    }
-
-    /*
-     * Landscape:
-     *
-     * 34px trái
-     * 34px phải
-     */
-    CGFloat usableWidth =
-        width - (SC16_MARGIN * 2.0);
-
-    if (usableWidth <= 0.0)
-        return 1.0;
-
-    return usableWidth / width;
-}
-
-#pragma mark - Apply Scale
+#pragma mark - Scale
 
 static void SC16ApplyScale(UIWindow *window)
 {
@@ -150,10 +83,10 @@ static void SC16ApplyScale(UIWindow *window)
     if (!root)
         return;
 
-    UIView *rootView =
+    UIView *view =
         root.view;
 
-    if (!rootView)
+    if (!view)
         return;
 
     CGRect bounds =
@@ -169,64 +102,83 @@ static void SC16ApplyScale(UIWindow *window)
         return;
 
     /*
-     * Luôn reset trước.
-     *
-     * Điều này rất quan trọng khi xoay:
-     *
-     * Portrait -> Landscape
-     * Landscape -> Portrait
-     *
-     * Không được scale chồng lên nhau.
+     * Reset trước khi tính scale mới.
+     * Tránh scale chồng khi xoay màn hình.
      */
-    rootView.transform =
+    view.transform =
         CGAffineTransformIdentity;
 
     /*
-     * Lấy đúng tâm của màn hình.
+     * Lấy tâm màn hình.
      */
-    CGPoint screenCenter =
+    CGPoint center =
         CGPointMake(
             CGRectGetMidX(bounds),
             CGRectGetMidY(bounds)
         );
 
-    /*
-     * Scale theo kích thước màn hình.
-     */
-    CGFloat scale =
-        SC16ScaleForWindow(window);
+    CGFloat scale = 1.0;
 
-    if (scale <= 0.0 || scale > 1.0)
+    /*
+     * Portrait:
+     *
+     * 34px trên
+     * 34px dưới
+     */
+    if (height > width)
+    {
+        CGFloat usableHeight =
+            height - (SC16_MARGIN * 2.0);
+
+        if (usableHeight <= 0.0)
+            return;
+
+        scale =
+            usableHeight / height;
+    }
+    /*
+     * Landscape:
+     *
+     * 34px trái
+     * 34px phải
+     */
+    else
+    {
+        CGFloat usableWidth =
+            width - (SC16_MARGIN * 2.0);
+
+        if (usableWidth <= 0.0)
+            return;
+
+        scale =
+            usableWidth / width;
+    }
+
+    if (scale <= 0.0)
+        return;
+
+    if (scale > 1.0)
         scale = 1.0;
 
     /*
-     * Scale quanh tâm của root view.
+     * Scale root UI.
      */
-    rootView.transform =
+    view.transform =
         CGAffineTransformMakeScale(
             scale,
             scale
         );
 
     /*
-     * Đưa tâm root UI về đúng tâm màn hình.
+     * Căn chính giữa màn hình.
      *
-     * KHÔNG cộng/trừ 10px.
-     * KHÔNG dịch theo margin.
-     *
-     * Vì vậy:
-     *
-     * Portrait:
-     *   khoảng trống trên = khoảng trống dưới
-     *
-     * Landscape:
-     *   khoảng trống trái = khoảng trống phải
+     * Không có +10 / -10.
+     * Không có offset 34.
      */
-    rootView.center =
-        screenCenter;
+    view.center = center;
 }
 
-#pragma mark - Apply All Windows
+#pragma mark - Apply Scenes
 
 static void SC16ApplyAllWindows(void)
 {
@@ -239,27 +191,26 @@ static void SC16ApplyAllWindows(void)
     if (!application)
         return;
 
-    NSSet<UIScene *> *scenes =
-        application.connectedScenes;
-
-    for (UIScene *scene in scenes)
+    for (UIScene *scene in
+         application.connectedScenes)
     {
-        if (![scene isKindOfClass:[UIWindowScene class]])
+        if (![scene
+              isKindOfClass:[UIWindowScene class]])
+        {
             continue;
+        }
 
         UIWindowScene *windowScene =
             (UIWindowScene *)scene;
 
-        UISceneActivationState state =
-            windowScene.activationState;
-
-        if (state == UISceneActivationStateUnattached)
+        if (windowScene.activationState ==
+            UISceneActivationStateUnattached)
+        {
             continue;
+        }
 
-        NSArray<UIWindow *> *windows =
-            windowScene.windows;
-
-        for (UIWindow *window in windows)
+        for (UIWindow *window in
+             windowScene.windows)
         {
             SC16ApplyScale(window);
         }
@@ -268,7 +219,7 @@ static void SC16ApplyAllWindows(void)
 
 #pragma mark - Delayed Apply
 
-static void SC16ScheduleApply(void)
+static void SC16ApplyLater(void)
 {
     if (!SC16Enabled())
         return;
@@ -282,21 +233,7 @@ static void SC16ScheduleApply(void)
                 dispatch_time(
                     DISPATCH_TIME_NOW,
                     (int64_t)(
-                        0.20 *
-                        NSEC_PER_SEC
-                    )
-                ),
-                dispatch_get_main_queue(),
-                ^{
-                    SC16ApplyAllWindows();
-                }
-            );
-
-            dispatch_after(
-                dispatch_time(
-                    DISPATCH_TIME_NOW,
-                    (int64_t)(
-                        0.75 *
+                        0.30 *
                         NSEC_PER_SEC
                     )
                 ),
@@ -320,7 +257,7 @@ static void SC16ScheduleApply(void)
     if (!SC16Enabled())
         return;
 
-    SC16ScheduleApply();
+    SC16ApplyLater();
 }
 
 - (void)setRootViewController:
@@ -331,7 +268,7 @@ static void SC16ScheduleApply(void)
     if (!SC16Enabled())
         return;
 
-    SC16ScheduleApply();
+    SC16ApplyLater();
 }
 
 - (void)setHidden:(BOOL)hidden
@@ -344,45 +281,15 @@ static void SC16ScheduleApply(void)
     if (hidden)
         return;
 
-    SC16ScheduleApply();
-}
-
-- (void)layoutSubviews
-{
-    %orig;
-
-    if (!SC16Enabled())
-        return;
-
-    /*
-     * UIKit có thể layout lại root view khi:
-     *
-     * - xoay màn hình
-     * - thay đổi safe area
-     * - chuyển app
-     *
-     * Apply lại sau layout để giữ scale.
-     */
-    dispatch_async(
-        dispatch_get_main_queue(),
-        ^{
-            SC16ApplyScale(self);
-        }
-    );
+    SC16ApplyLater();
 }
 
 %end
 
-#pragma mark - UIViewController
+#pragma mark - Status Bar
 
 %hook UIViewController
 
-/*
- * Ẩn Status Bar.
- *
- * Không ẩn Home Bar.
- * Không transform Status Bar.
- */
 - (BOOL)prefersStatusBarHidden
 {
     if (SC16Enabled())
@@ -393,18 +300,21 @@ static void SC16ScheduleApply(void)
 
 %end
 
-#pragma mark - Orientation
+#pragma mark - Orientation Notification
 
-%hook UIWindowScene
-
-- (void)setInterfaceOrientation:
-    (UIInterfaceOrientation)orientation
+static void SC16OrientationChanged(
+    NSNotification *notification
+)
 {
-    %orig(orientation);
-
     if (!SC16Enabled())
         return;
 
+    /*
+     * Không hook private orientation API.
+     *
+     * Chỉ đợi UIKit hoàn thành orientation transition
+     * rồi tính scale lại.
+     */
     dispatch_async(
         dispatch_get_main_queue(),
         ^{
@@ -412,8 +322,6 @@ static void SC16ScheduleApply(void)
         }
     );
 }
-
-%end
 
 #pragma mark - Constructor
 
@@ -424,6 +332,24 @@ static void SC16ScheduleApply(void)
         if (!SC16Enabled())
             return;
 
+        /*
+         * Orientation notification.
+         */
+        [[NSNotificationCenter defaultCenter]
+            addObserverForName:
+                UIDeviceOrientationDidChangeNotification
+            object:nil
+            queue:
+                [NSOperationQueue mainQueue]
+            usingBlock:
+                ^(NSNotification *notification)
+            {
+                SC16OrientationChanged(notification);
+            }];
+
+        /*
+         * Initial apply.
+         */
         dispatch_async(
             dispatch_get_main_queue(),
             ^{
@@ -433,21 +359,7 @@ static void SC16ScheduleApply(void)
                     dispatch_time(
                         DISPATCH_TIME_NOW,
                         (int64_t)(
-                            0.25 *
-                            NSEC_PER_SEC
-                        )
-                    ),
-                    dispatch_get_main_queue(),
-                    ^{
-                        SC16ApplyAllWindows();
-                    }
-                );
-
-                dispatch_after(
-                    dispatch_time(
-                        DISPATCH_TIME_NOW,
-                        (int64_t)(
-                            1.0 *
+                            0.5 *
                             NSEC_PER_SEC
                         )
                     ),
