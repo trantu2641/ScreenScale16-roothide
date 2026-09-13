@@ -3,135 +3,398 @@
 
 #pragma mark - Configuration
 
-// Portrait: crop 34pt from the top and 34pt from the bottom.
+/*
+ * Portrait:
+ *   Trên 34px
+ *   Dưới 34px
+ *
+ * Không dùng phần này để dịch UI.
+ */
 static CGFloat const SC16_CROP_TOP = 34.0;
 static CGFloat const SC16_CROP_BOTTOM = 34.0;
 
-// Overall UI scale. 1.0 = original size.
-// 0.90 gives a one-hand-like reduced presentation.
+/*
+ * Scale toàn bộ nội dung.
+ *
+ * 1.00 = kích thước gốc
+ * 0.90 = thu nhỏ 90%
+ */
 static CGFloat const SC16_SCALE = 0.90;
 
-// Apply the scale around the center of the usable screen area.
+#pragma mark - Enable
+
 static BOOL SC16Enabled(void)
 {
-    return [UIDevice.currentDevice.systemVersion hasPrefix:@"16."];
+    NSString *version =
+        UIDevice.currentDevice.systemVersion;
+
+    return [version hasPrefix:@"16."];
 }
+
+#pragma mark - Window Filter
 
 static BOOL SC16ShouldSkipWindow(UIWindow *window)
 {
-    if (!window || window.hidden || window.alpha <= 0.0)
+    if (!window)
         return YES;
 
-    NSString *name = NSStringFromClass(window.class);
+    if (window.hidden)
+        return YES;
 
-    if ([name containsString:@"UITextEffectsWindow"] ||
-        [name containsString:@"UIRemoteKeyboardWindow"] ||
-        [name containsString:@"Keyboard"] ||
-        [name containsString:@"StatusBar"] ||
-        [name containsString:@"_UIStatusBar"] ||
-        [name containsString:@"Alert"] ||
-        [name containsString:@"UIAlert"])
+    if (window.alpha <= 0.0)
+        return YES;
+
+    NSString *name =
+        NSStringFromClass(window.class);
+
+    /*
+     * Keyboard.
+     */
+    if ([name containsString:@"UITextEffectsWindow"])
+        return YES;
+
+    if ([name containsString:@"UIRemoteKeyboardWindow"])
+        return YES;
+
+    if ([name containsString:@"Keyboard"])
+        return YES;
+
+    if ([name containsString:@"KeyboardWindow"])
+        return YES;
+
+    /*
+     * Status bar.
+     *
+     * Bản này không xử lý/scale status bar window.
+     */
+    if ([name containsString:@"StatusBar"])
+        return YES;
+
+    if ([name containsString:@"_UIStatusBar"])
+        return YES;
+
+    /*
+     * Alert.
+     */
+    if ([name containsString:@"Alert"])
+        return YES;
+
+    if ([name containsString:@"UIAlert"])
         return YES;
 
     return NO;
 }
 
-static void SC16ApplyScaleAndCrop(UIWindow *window)
+#pragma mark - Status Bar
+
+static void SC16HideStatusBar(void)
 {
-    if (!SC16Enabled() || SC16ShouldSkipWindow(window))
+    UIApplication *application =
+        UIApplication.sharedApplication;
+
+    if (!application)
         return;
 
-    CGRect bounds = window.bounds;
-    CGFloat width = CGRectGetWidth(bounds);
-    CGFloat height = CGRectGetHeight(bounds);
+    for (UIScene *scene in application.connectedScenes)
+    {
+        if (![scene
+              isKindOfClass:[UIWindowScene class]])
+        {
+            continue;
+        }
 
-    if (width <= 0.0 || height <= 0.0)
+        UIWindowScene *windowScene =
+            (UIWindowScene *)scene;
+
+        if (!windowScene.windows.count)
+            continue;
+
+        /*
+         * Không đụng geometry.
+         *
+         * Chỉ yêu cầu scene không hiển thị status bar.
+         */
+        UIViewController *rootController = nil;
+
+        for (UIWindow *window in windowScene.windows)
+        {
+            if (window.hidden)
+                continue;
+
+            if (window.rootViewController)
+            {
+                rootController =
+                    window.rootViewController;
+                break;
+            }
+        }
+
+        if (!rootController)
+            continue;
+
+        [rootController setNeedsStatusBarAppearanceUpdate];
+    }
+}
+
+#pragma mark - Scale + Crop
+
+static void SC16ApplyScale(UIWindow *window)
+{
+    if (!SC16Enabled())
         return;
 
-    // Work in the window's existing coordinate system.
-    // The crop remains 34pt top/bottom; scaling is independent.
-    CGFloat usableHeight = height - SC16_CROP_TOP - SC16_CROP_BOTTOM;
-    if (usableHeight <= 0.0)
+    if (SC16ShouldSkipWindow(window))
         return;
 
-    CALayer *layer = window.layer;
+    CGRect bounds =
+        window.bounds;
 
-    // Crop only the renderable area. Do not move the UIWindow itself.
-    CAShapeLayer *mask = [CAShapeLayer layer];
-    mask.frame = bounds;
+    CGFloat width =
+        CGRectGetWidth(bounds);
 
-    CGRect visibleRect = CGRectMake(
-        CGRectGetMinX(bounds),
-        CGRectGetMinY(bounds) + SC16_CROP_TOP,
-        width,
-        usableHeight
-    );
+    CGFloat height =
+        CGRectGetHeight(bounds);
 
-    CGPathRef path = CGPathCreateWithRect(visibleRect, NULL);
-    mask.path = path;
+    if (width <= 0.0 ||
+        height <= 0.0)
+    {
+        return;
+    }
+
+    /*
+     * Xác định orientation dựa trên
+     * bounds hiện tại của window.
+     *
+     * Không dùng frame cũ.
+     */
+    BOOL portrait =
+        height > width;
+
+    /*
+     * Crop 34px trên/dưới ở portrait.
+     *
+     * Landscape:
+     * không crop trái/phải trong bản scale này.
+     */
+    CGFloat top = 0.0;
+    CGFloat bottom = 0.0;
+
+    if (portrait)
+    {
+        top = SC16_CROP_TOP;
+        bottom = SC16_CROP_BOTTOM;
+    }
+
+    CGFloat usableWidth =
+        width;
+
+    CGFloat usableHeight =
+        height - top - bottom;
+
+    if (usableWidth <= 0.0 ||
+        usableHeight <= 0.0)
+    {
+        return;
+    }
+
+    /*
+     * Dùng layer mask để giới hạn vùng render.
+     *
+     * Không tạo UIView che.
+     */
+    CALayer *layer =
+        window.layer;
+
+    layer.mask = nil;
+
+    CAShapeLayer *mask =
+        [CAShapeLayer layer];
+
+    mask.frame =
+        bounds;
+
+    CGRect visibleRect =
+        CGRectMake(
+            CGRectGetMinX(bounds),
+            CGRectGetMinY(bounds) + top,
+            usableWidth,
+            usableHeight
+        );
+
+    CGPathRef path =
+        CGPathCreateWithRect(
+            visibleRect,
+            NULL
+        );
+
+    mask.path =
+        path;
+
     CGPathRelease(path);
 
-    layer.mask = mask;
+    layer.mask =
+        mask;
 
-    // Scale the rendered contents inside the existing window.
-    // This does not change frame/bounds or safe-area geometry.
-    CGFloat scale = SC16_SCALE;
-    if (scale <= 0.0 || scale > 1.0)
+    /*
+     * Scale nội dung.
+     *
+     * Không thay:
+     * - frame
+     * - bounds
+     * - center
+     * - safeAreaInsets
+     *
+     * Vì vậy không tạo offset UI.
+     */
+    CGFloat scale =
+        SC16_SCALE;
+
+    if (scale <= 0.0)
         scale = 1.0;
 
-    layer.sublayerTransform = CATransform3DMakeScale(scale, scale, 1.0);
+    if (scale > 1.0)
+        scale = 1.0;
 
-    // Keep the reduced UI centered in the usable screen region.
-    CGFloat centerY = CGRectGetMinY(visibleRect) + usableHeight * 0.5;
-    CGFloat deltaY = centerY - CGRectGetMidY(bounds);
+    /*
+     * Scale quanh tâm vùng hiển thị.
+     */
+    CGFloat centerX =
+        CGRectGetMidX(visibleRect);
 
-    CATransform3D transform = CATransform3DMakeScale(scale, scale, 1.0);
-    transform = CATransform3DTranslate(
-        transform,
-        0.0,
-        deltaY / scale,
-        0.0
-    );
-    layer.sublayerTransform = transform;
+    CGFloat centerY =
+        CGRectGetMidY(visibleRect);
+
+    CGFloat windowCenterX =
+        CGRectGetMidX(bounds);
+
+    CGFloat windowCenterY =
+        CGRectGetMidY(bounds);
+
+    CGFloat offsetX =
+        centerX - windowCenterX;
+
+    CGFloat offsetY =
+        centerY - windowCenterY;
+
+    CATransform3D transform =
+        CATransform3DIdentity;
+
+    transform =
+        CATransform3DTranslate(
+            transform,
+            offsetX,
+            offsetY,
+            0.0
+        );
+
+    transform =
+        CATransform3DScale(
+            transform,
+            scale,
+            scale,
+            1.0
+        );
+
+    transform =
+        CATransform3DTranslate(
+            transform,
+            -offsetX,
+            -offsetY,
+            0.0
+        );
+
+    layer.sublayerTransform =
+        transform;
 }
+
+#pragma mark - Scene
+
+static void SC16ApplyScene(UIWindowScene *scene)
+{
+    if (!SC16Enabled())
+        return;
+
+    if (!scene)
+        return;
+
+    if (scene.activationState ==
+        UISceneActivationStateUnattached)
+    {
+        return;
+    }
+
+    NSArray<UIWindow *> *windows =
+        scene.windows;
+
+    for (UIWindow *window in windows)
+    {
+        if (!window)
+            continue;
+
+        SC16ApplyScale(window);
+    }
+}
+
+#pragma mark - All Scenes
 
 static void SC16ApplyAllScenes(void)
 {
     if (!SC16Enabled())
         return;
 
-    UIApplication *application = UIApplication.sharedApplication;
+    UIApplication *application =
+        UIApplication.sharedApplication;
 
-    for (UIScene *scene in application.connectedScenes)
+    NSSet<UIScene *> *scenes =
+        application.connectedScenes;
+
+    for (UIScene *scene in scenes)
     {
-        if (![scene isKindOfClass:[UIWindowScene class]])
+        if (![scene
+              isKindOfClass:[UIWindowScene class]])
+        {
             continue;
+        }
 
-        UIWindowScene *windowScene = (UIWindowScene *)scene;
-        if (windowScene.activationState == UISceneActivationStateUnattached)
-            continue;
-
-        for (UIWindow *window in windowScene.windows)
-            SC16ApplyScaleAndCrop(window);
+        SC16ApplyScene(
+            (UIWindowScene *)scene
+        );
     }
+
+    SC16HideStatusBar();
 }
 
-static void SC16ScheduleApply(void)
+#pragma mark - Delayed Apply
+
+static void SC16ApplyDelayed(void)
 {
     if (!SC16Enabled())
         return;
 
-    dispatch_async(dispatch_get_main_queue(), ^{
-        SC16ApplyAllScenes();
+    dispatch_async(
+        dispatch_get_main_queue(),
+        ^{
+            SC16ApplyAllScenes();
 
-        dispatch_after(
-            dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)),
-            dispatch_get_main_queue(),
-            ^{
-                SC16ApplyAllScenes();
-            }
-        );
-    });
+            /*
+             * UIKit có thể cập nhật bounds
+             * sau lifecycle hiện tại.
+             */
+            dispatch_after(
+                dispatch_time(
+                    DISPATCH_TIME_NOW,
+                    (int64_t)(
+                        0.25 *
+                        NSEC_PER_SEC
+                    )
+                ),
+                dispatch_get_main_queue(),
+                ^{
+                    SC16ApplyAllScenes();
+                }
+            );
+        }
+    );
 }
 
 #pragma mark - UIWindow Hooks
@@ -141,15 +404,24 @@ static void SC16ScheduleApply(void)
 - (void)makeKeyAndVisible
 {
     %orig;
-    SC16ScheduleApply();
+
+    if (!SC16Enabled())
+        return;
+
+    SC16ApplyDelayed();
 }
 
 - (void)setHidden:(BOOL)hidden
 {
     %orig(hidden);
 
-    if (!hidden)
-        SC16ScheduleApply();
+    if (!SC16Enabled())
+        return;
+
+    if (hidden)
+        return;
+
+    SC16ApplyDelayed();
 }
 
 %end
@@ -163,6 +435,14 @@ static void SC16ScheduleApply(void)
         if (!SC16Enabled())
             return;
 
-        SC16ScheduleApply();
+        /*
+         * Đợi UIKit khởi tạo scene/window.
+         */
+        dispatch_async(
+            dispatch_get_main_queue(),
+            ^{
+                SC16ApplyDelayed();
+            }
+        );
     }
 }
