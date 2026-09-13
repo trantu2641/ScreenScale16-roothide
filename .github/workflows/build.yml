@@ -1,249 +1,250 @@
 name: Build ScreenScale16 - Roothide
+
 on:
-workflow_dispatch:
+  workflow_dispatch:
+
 jobs:
-build:
-runs-on: ubuntu-latest
-```
-steps:
-  - name: Checkout
-    uses: actions/checkout@v4
+  build:
+    runs-on: ubuntu-latest
 
-  - name: Install dependencies
-    run: |
-      set -euxo pipefail
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      sudo apt-get update
+      - name: Install dependencies
+        run: |
+          set -euxo pipefail
 
-      sudo apt-get install -y \
-        git \
-        curl \
-        make \
-        perl \
-        fakeroot \
-        rsync \
-        xz-utils \
-        libio-compress-lzma-perl \
-        clang \
-        llvm \
-        lld \
-        build-essential
+          sudo apt-get update
 
-  - name: Install roothide Theos
-    shell: bash
-    run: |
-      set -euxo pipefail
+          sudo apt-get install -y \
+            git \
+            curl \
+            make \
+            perl \
+            fakeroot \
+            rsync \
+            xz-utils \
+            libio-compress-lzma-perl \
+            clang \
+            llvm \
+            lld \
+            build-essential
 
-      export THEOS="$HOME/theos"
+      - name: Install roothide Theos
+        shell: bash
+        run: |
+          set -euxo pipefail
 
-      rm -rf "$THEOS"
+          export THEOS="$HOME/theos"
 
-      curl -fsSL \
-        https://raw.githubusercontent.com/roothide/theos/master/bin/install-theos \
-        -o /tmp/install-theos.sh
+          rm -rf "$THEOS"
 
-      chmod +x /tmp/install-theos.sh
+          curl -fsSL \
+            https://raw.githubusercontent.com/roothide/theos/master/bin/install-theos \
+            -o /tmp/install-theos.sh
 
-      bash /tmp/install-theos.sh
+          chmod +x /tmp/install-theos.sh
 
-      echo "THEOS=$THEOS" >> "$GITHUB_ENV"
+          bash /tmp/install-theos.sh
 
-      echo "=== Theos ==="
-      ls -la "$THEOS"
+          echo "THEOS=$THEOS" >> "$GITHUB_ENV"
 
-  - name: Install iOS 16.5 SDK
-    shell: bash
-    run: |
-      set -euxo pipefail
+          echo "=== Theos ==="
+          ls -la "$THEOS"
 
-      export THEOS="$HOME/theos"
+      - name: Install iOS 16.5 SDK
+        shell: bash
+        run: |
+          set -euxo pipefail
 
-      mkdir -p "$THEOS/sdks"
+          export THEOS="$HOME/theos"
 
-      cd /tmp
+          mkdir -p "$THEOS/sdks"
 
-      rm -rf theos-sdks
+          cd /tmp
 
-      git clone \
-        --depth=1 \
-        --filter=tree:0 \
-        --no-checkout \
-        https://github.com/theos/sdks.git \
-        theos-sdks
+          rm -rf theos-sdks
 
-      cd theos-sdks
+          git clone \
+            --depth=1 \
+            --filter=tree:0 \
+            --no-checkout \
+            https://github.com/theos/sdks.git \
+            theos-sdks
 
-      git sparse-checkout init --cone
-      git sparse-checkout set iPhoneOS16.5.sdk
+          cd theos-sdks
 
-      git checkout
+          git sparse-checkout init --cone
+          git sparse-checkout set iPhoneOS16.5.sdk
 
-      test -d iPhoneOS16.5.sdk
+          git checkout
 
-      rm -rf "$THEOS/sdks/iPhoneOS16.5.sdk"
+          test -d iPhoneOS16.5.sdk
 
-      cp -R \
-        iPhoneOS16.5.sdk \
-        "$THEOS/sdks/"
+          rm -rf "$THEOS/sdks/iPhoneOS16.5.sdk"
 
-      echo "=== Installed SDK ==="
-      ls -ld "$THEOS/sdks/iPhoneOS16.5.sdk"
+          cp -R \
+            iPhoneOS16.5.sdk \
+            "$THEOS/sdks/"
 
-  - name: Detect Theos toolchain
-    shell: bash
-    run: |
-      set -euxo pipefail
+          echo "=== Installed SDK ==="
+          ls -ld "$THEOS/sdks/iPhoneOS16.5.sdk"
 
-      export THEOS="$HOME/theos"
+      - name: Detect Theos toolchain
+        shell: bash
+        run: |
+          set -euxo pipefail
 
-      echo "=== Searching for clang ==="
+          export THEOS="$HOME/theos"
 
-      find "$THEOS/toolchain" \
-        -type f \
-        \( -name clang -o -name clang++ \) \
-        -print \
-        2>/dev/null || true
+          echo "=== Searching for clang ==="
 
-      echo "=== Theos toolchain directories ==="
+          find "$THEOS/toolchain" \
+            -type f \
+            \( -name clang -o -name clang++ \) \
+            -print \
+            2>/dev/null || true
 
-      find "$THEOS/toolchain" \
-        -maxdepth 4 \
-        -type d \
-        -print \
-        2>/dev/null || true
+          echo "=== Theos toolchain directories ==="
 
-      echo "=== System clang ==="
-      command -v clang
-      command -v clang++
+          find "$THEOS/toolchain" \
+            -maxdepth 4 \
+            -type d \
+            -print \
+            2>/dev/null || true
 
-      clang --version
-      clang++ --version
+          echo "=== System clang ==="
+          command -v clang
+          command -v clang++
 
-  - name: Configure Theos compiler
-    shell: bash
-    run: |
-      set -euxo pipefail
+          clang --version
+          clang++ --version
 
-      export THEOS="$HOME/theos"
+      - name: Configure Theos compiler
+        shell: bash
+        run: |
+          set -euxo pipefail
 
-      TOOLCHAIN_ROOT="$THEOS/toolchain"
+          export THEOS="$HOME/theos"
 
-      echo "THEOS=$THEOS"
+          TOOLCHAIN_ROOT="$THEOS/toolchain"
 
-      echo "=== Looking for Theos compiler ==="
+          echo "THEOS=$THEOS"
 
-      THEOS_CLANG="$(find "$TOOLCHAIN_ROOT" \
-        -type f \
-        -name clang \
-        -perm -111 \
-        -print \
-        2>/dev/null | head -n 1 || true)"
+          echo "=== Looking for Theos compiler ==="
 
-      THEOS_CLANGXX="$(find "$TOOLCHAIN_ROOT" \
-        -type f \
-        -name clang++ \
-        -perm -111 \
-        -print \
-        2>/dev/null | head -n 1 || true)"
+          THEOS_CLANG="$(find "$TOOLCHAIN_ROOT" \
+            -type f \
+            -name clang \
+            -perm -111 \
+            -print \
+            2>/dev/null | head -n 1 || true)"
 
-      if [ -n "$THEOS_CLANG" ] && [ -n "$THEOS_CLANGXX" ]; then
-        echo "Found Theos clang:"
-        echo "$THEOS_CLANG"
-        echo "$THEOS_CLANGXX"
+          THEOS_CLANGXX="$(find "$TOOLCHAIN_ROOT" \
+            -type f \
+            -name clang++ \
+            -perm -111 \
+            -print \
+            2>/dev/null | head -n 1 || true)"
 
-        TOOLCHAIN_BIN="$(dirname "$THEOS_CLANG")"
+          if [ -n "$THEOS_CLANG" ] && [ -n "$THEOS_CLANGXX" ]; then
+            echo "Found Theos clang:"
+            echo "$THEOS_CLANG"
+            echo "$THEOS_CLANGXX"
 
-        echo "THEOS_TOOLCHAIN_BIN=$TOOLCHAIN_BIN" >> "$GITHUB_ENV"
+            TOOLCHAIN_BIN="$(dirname "$THEOS_CLANG")"
 
-        echo "PATH=$TOOLCHAIN_BIN:$PATH" >> "$GITHUB_ENV"
+            echo "THEOS_TOOLCHAIN_BIN=$TOOLCHAIN_BIN" >> "$GITHUB_ENV"
 
-        echo "TARGET=iphone:clang:16.5:16.0" >> "$GITHUB_ENV"
-      else
-        echo "Theos-specific clang was not found."
-        echo "Using system LLVM compiler."
+            echo "PATH=$TOOLCHAIN_BIN:$PATH" >> "$GITHUB_ENV"
 
-        echo "THEOS_TOOLCHAIN_BIN=/usr/bin" >> "$GITHUB_ENV"
-        echo "PATH=/usr/bin:$PATH" >> "$GITHUB_ENV"
+            echo "TARGET=iphone:clang:16.5:16.0" >> "$GITHUB_ENV"
+          else
+            echo "Theos-specific clang was not found."
+            echo "Using system LLVM compiler."
 
-        echo "TARGET=iphone:clang:16.5:16.0" >> "$GITHUB_ENV"
-      fi
+            echo "THEOS_TOOLCHAIN_BIN=/usr/bin" >> "$GITHUB_ENV"
+            echo "PATH=/usr/bin:$PATH" >> "$GITHUB_ENV"
 
-  - name: Verify toolchain
-    shell: bash
-    run: |
-      set -euxo pipefail
+            echo "TARGET=iphone:clang:16.5:16.0" >> "$GITHUB_ENV"
+          fi
 
-      export THEOS="$HOME/theos"
+      - name: Verify toolchain
+        shell: bash
+        run: |
+          set -euxo pipefail
 
-      echo "=== THEOS ==="
-      echo "$THEOS"
+          export THEOS="$HOME/theos"
 
-      echo "=== PATH ==="
-      echo "$PATH"
+          echo "=== THEOS ==="
+          echo "$THEOS"
 
-      echo "=== SDK ==="
-      test -d "$THEOS/sdks/iPhoneOS16.5.sdk"
-      ls -ld "$THEOS/sdks/iPhoneOS16.5.sdk"
+          echo "=== PATH ==="
+          echo "$PATH"
 
-      echo "=== Compiler ==="
-      command -v clang
-      command -v clang++
+          echo "=== SDK ==="
+          test -d "$THEOS/sdks/iPhoneOS16.5.sdk"
+          ls -ld "$THEOS/sdks/iPhoneOS16.5.sdk"
 
-      clang --version
-      clang++ --version
+          echo "=== Compiler ==="
+          command -v clang
+          command -v clang++
 
-      echo "=== Theos ==="
-      test -d "$THEOS/makefiles"
-      test -d "$THEOS/vendor"
+          clang --version
+          clang++ --version
 
-      echo "=== Roothide module ==="
+          echo "=== Theos ==="
+          test -d "$THEOS/makefiles"
+          test -d "$THEOS/vendor"
 
-      if [ -d "$THEOS/vendor/mod/roothide" ]; then
-        ls -ld "$THEOS/vendor/mod/roothide"
-      else
-        echo "Roothide module directory not found."
-        echo "Checking vendor:"
-        find "$THEOS/vendor" -maxdepth 3 -type d -print 2>/dev/null || true
-      fi
+          echo "=== Roothide module ==="
 
-  - name: Build
-    shell: bash
-    run: |
-      set -euxo pipefail
+          if [ -d "$THEOS/vendor/mod/roothide" ]; then
+            ls -ld "$THEOS/vendor/mod/roothide"
+          else
+            echo "Roothide module directory not found."
+            echo "Checking vendor:"
+            find "$THEOS/vendor" -maxdepth 3 -type d -print 2>/dev/null || true
+          fi
 
-      export THEOS="$HOME/theos"
+      - name: Build
+        shell: bash
+        run: |
+          set -euxo pipefail
 
-      echo "=== Build environment ==="
-      echo "THEOS=$THEOS"
-      echo "TARGET=$TARGET"
-      echo "THEOS_TOOLCHAIN_BIN=${THEOS_TOOLCHAIN_BIN:-}"
+          export THEOS="$HOME/theos"
 
-      make clean
+          echo "=== Build environment ==="
+          echo "THEOS=$THEOS"
+          echo "TARGET=$TARGET"
+          echo "THEOS_TOOLCHAIN_BIN=${THEOS_TOOLCHAIN_BIN:-}"
 
-      make package \
-        FINALPACKAGE=1 \
-        THEOS_PACKAGE_SCHEME=roothide
+          make clean
 
-  - name: Check DEB
-    shell: bash
-    run: |
-      set -euxo pipefail
+          make package \
+            FINALPACKAGE=1 \
+            THEOS_PACKAGE_SCHEME=roothide
 
-      echo "=== Packages ==="
+      - name: Check DEB
+        shell: bash
+        run: |
+          set -euxo pipefail
 
-      find packages \
-        -type f \
-        -name "*.deb" \
-        -print
+          echo "=== Packages ==="
 
-      test -n "$(find packages -type f -name '*.deb' -print -quit)"
+          find packages \
+            -type f \
+            -name "*.deb" \
+            -print
 
-      dpkg-deb -I packages/*.deb
+          test -n "$(find packages -type f -name '*.deb' -print -quit)"
 
-  - name: Upload DEB
-    uses: actions/upload-artifact@v4
-    with:
-      name: ScreenScale16-roothide
-      path: packages/*.deb
-      if-no-files-found: error
-```
+          dpkg-deb -I packages/*.deb
+
+      - name: Upload DEB
+        uses: actions/upload-artifact@v4
+        with:
+          name: ScreenScale16-roothide
+          path: packages/*.deb
+          if-no-files-found: error
