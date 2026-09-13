@@ -1,160 +1,151 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
-#import <objc/message.h>
+#import <CoreGraphics/CoreGraphics.h>
 #import <objc/runtime.h>
+#import <dispatch/dispatch.h>
 
 #pragma mark - Configuration
 
 /*
- * Khoảng chừa mỗi bên màn hình.
+ * Khoảng chừa mỗi đầu màn hình.
  *
  * Portrait:
- *     34px trên
- *     34px dưới
+ *   34px trên
+ *   34px dưới
  *
  * Landscape:
- *     34px trái
- *     34px phải
+ *   34px trái
+ *   34px phải
  *
  * UI được scale vào giữa vùng hiển thị.
  */
 static const CGFloat SC16_CROP = 34.0;
 
-#pragma mark - Runtime helpers
-
-static BOOL SC16IsSpringBoard(void)
-{
-    NSString *process =
-        [NSProcessInfo processInfo].processName;
-
-    return [process isEqualToString:@"SpringBoard"];
-}
-
+/*
+ * Chỉ hoạt động trên iOS 16.
+ */
 static BOOL SC16Enabled(void)
 {
-    if (!SC16IsSpringBoard())
-        return NO;
-
-    NSString *version =
-        UIDevice.currentDevice.systemVersion;
-
+    NSString *version = UIDevice.currentDevice.systemVersion;
     return [version hasPrefix:@"16."];
 }
 
-static UIWindow *SC16GetWindowRoot(void)
+#pragma mark - Process
+
+static BOOL SC16IsSpringBoard(void)
 {
-    UIApplication *app =
-        UIApplication.sharedApplication;
+    NSString *bundleID =
+        NSBundle.mainBundle.bundleIdentifier;
 
-    NSSet *scenes =
-        app.connectedScenes;
+    if (!bundleID)
+        return NO;
 
-    for (UIScene *scene in scenes)
-    {
-        if (![scene isKindOfClass:[UIWindowScene class]])
-            continue;
-
-        UIWindowScene *ws =
-            (UIWindowScene *)scene;
-
-        if (ws.activationState ==
-            UISceneActivationStateUnattached)
-            continue;
-
-        /*
-         * Ưu tiên UIRootSceneWindow.
-         *
-         * Đây là loại window mà OneHandWizard2
-         * cũng sử dụng.
-         */
-        for (UIWindow *window in ws.windows)
-        {
-            NSString *name =
-                NSStringFromClass(window.class);
-
-            if ([name isEqualToString:@"UIRootSceneWindow"])
-                return window;
-        }
-    }
-
-    return nil;
+    return [bundleID isEqualToString:@"com.apple.springboard"];
 }
 
-#pragma mark - Scale calculation
+#pragma mark - Window Filter
 
-static CGFloat SC16ScaleForBounds(CGRect bounds)
-{
-    CGFloat width =
-        CGRectGetWidth(bounds);
-
-    CGFloat height =
-        CGRectGetHeight(bounds);
-
-    if (width <= 0.0 || height <= 0.0)
-        return 1.0;
-
-    /*
-     * Portrait:
-     *
-     * scale theo chiều cao.
-     */
-    if (height > width)
-    {
-        CGFloat usableHeight =
-            height - (SC16_CROP * 2.0);
-
-        if (usableHeight <= 0.0)
-            return 1.0;
-
-        return usableHeight / height;
-    }
-
-    /*
-     * Landscape:
-     *
-     * scale theo chiều ngang.
-     *
-     * Không dùng height ở đây để tránh
-     * UI landscape bị lệch.
-     */
-    CGFloat usableWidth =
-        width - (SC16_CROP * 2.0);
-
-    if (usableWidth <= 0.0)
-        return 1.0;
-
-    return usableWidth / width;
-}
-
-#pragma mark - Transform
-
-static void SC16ApplyTransformToWindow(UIWindow *window)
+static BOOL SC16ShouldSkipWindow(UIWindow *window)
 {
     if (!window)
-        return;
-
-    if (!window.windowScene)
-        return;
+        return YES;
 
     if (window.hidden)
-        return;
+        return YES;
 
     if (window.alpha <= 0.0)
-        return;
+        return YES;
 
-    NSString *name =
+    NSString *className =
         NSStringFromClass(window.class);
 
     /*
-     * Tuyệt đối không scale keyboard.
+     * Không đụng keyboard.
      */
-    if ([name containsString:@"Keyboard"])
+    if ([className containsString:@"UITextEffectsWindow"])
+        return YES;
+
+    if ([className containsString:@"UIRemoteKeyboardWindow"])
+        return YES;
+
+    if ([className containsString:@"KeyboardWindow"])
+        return YES;
+
+    if ([className containsString:@"Keyboard"])
+        return YES;
+
+    /*
+     * Không đụng StatusBar window.
+     */
+    if ([className containsString:@"StatusBar"])
+        return YES;
+
+    if ([className containsString:@"_UIStatusBar"])
+        return YES;
+
+    /*
+     * Không đụng các window phụ của hệ thống.
+     */
+    if ([className containsString:@"UIText"])
+        return YES;
+
+    return NO;
+}
+
+#pragma mark - Window Size
+
+static CGRect SC16DisplayBoundsForWindow(UIWindow *window)
+{
+    if (!window)
+        return CGRectZero;
+
+    UIWindowScene *scene =
+        window.windowScene;
+
+    if (!scene)
+        return window.bounds;
+
+    UIScreen *screen =
+        scene.screen;
+
+    if (!screen)
+        return window.bounds;
+
+    return screen.bounds;
+}
+
+#pragma mark - Scale
+
+static void SC16ApplyScaleToWindow(UIWindow *window)
+{
+    if (!SC16Enabled())
+        return;
+
+    if (!SC16IsSpringBoard())
+        return;
+
+    if (SC16ShouldSkipWindow(window))
         return;
 
     /*
-     * Status bar không bị transform riêng.
+     * Chỉ xử lý window thuộc UIWindowScene.
      */
-    if ([name containsString:@"StatusBar"])
+    UIWindowScene *scene =
+        window.windowScene;
+
+    if (!scene)
+        return;
+
+    if (scene.activationState ==
+        UISceneActivationStateUnattached)
+    {
+        return;
+    }
+
+    UIView *rootView =
+        window.rootViewController.view;
+
+    if (!rootView)
         return;
 
     CGRect bounds =
@@ -169,187 +160,319 @@ static void SC16ApplyTransformToWindow(UIWindow *window)
     if (width <= 0.0 || height <= 0.0)
         return;
 
-    CGFloat scale =
-        SC16ScaleForBounds(bounds);
+    /*
+     * Reset transform trước khi tính lại.
+     *
+     * Quan trọng khi xoay ngang/dọc.
+     */
+    rootView.transform =
+        CGAffineTransformIdentity;
 
-    if (scale >= 0.9999)
+    /*
+     * Dùng kích thước thật của window.
+     */
+    CGFloat scale = 1.0;
+
+    /*
+     * Portrait
+     *
+     * Giữ lại:
+     *
+     *   34px trên
+     *   34px dưới
+     */
+    if (height > width)
     {
-        window.transform =
-            CGAffineTransformIdentity;
+        CGFloat availableHeight =
+            height - (SC16_CROP * 2.0);
 
+        if (availableHeight <= 0.0)
+            return;
+
+        scale =
+            availableHeight / height;
+    }
+
+    /*
+     * Landscape
+     *
+     * Giữ lại:
+     *
+     *   34px trái
+     *   34px phải
+     *
+     * Scale theo chiều ngang để toàn bộ UI
+     * vẫn nằm trong vùng hiển thị.
+     */
+    else
+    {
+        CGFloat availableWidth =
+            width - (SC16_CROP * 2.0);
+
+        if (availableWidth <= 0.0)
+            return;
+
+        scale =
+            availableWidth / width;
+    }
+
+    if (scale <= 0.0 ||
+        scale >= 1.0)
+    {
         return;
     }
 
     /*
-     * Giữ chính giữa màn hình.
+     * Giữ nguyên tâm window.
      *
-     * Không thay frame.
-     * Không thay bounds.
-     *
-     * Chỉ thay transform của root system
-     * window.
+     * Đây là phần quan trọng để UI nằm chính giữa
+     * thay vì bị đẩy sang một phía khi landscape.
      */
     CGPoint center =
-        CGPointMake(
-            CGRectGetMidX(bounds),
-            CGRectGetMidY(bounds)
-        );
+        rootView.center;
 
-    window.transform =
-        CGAffineTransformIdentity;
-
-    window.center = center;
-
-    window.transform =
+    rootView.transform =
         CGAffineTransformMakeScale(
             scale,
             scale
         );
 
-    window.center = center;
+    rootView.center =
+        center;
+
+    /*
+     * Không thay frame sau transform.
+     *
+     * UIKit sẽ dùng transform để render toàn bộ
+     * cây view theo cùng một tỷ lệ.
+     */
 }
 
-#pragma mark - Find system root windows
+#pragma mark - Apply Scene
 
-static void SC16ApplySystemWindows(void)
+static void SC16ApplyScene(UIWindowScene *scene)
 {
     if (!SC16Enabled())
         return;
 
-    UIApplication *app =
-        UIApplication.sharedApplication;
+    if (!SC16IsSpringBoard())
+        return;
 
-    NSSet *scenes =
-        app.connectedScenes;
+    if (!scene)
+        return;
 
-    for (UIScene *scene in scenes)
+    if (scene.activationState ==
+        UISceneActivationStateUnattached)
     {
-        if (![scene isKindOfClass:[UIWindowScene class]])
+        return;
+    }
+
+    NSArray<UIWindow *> *windows =
+        scene.windows;
+
+    for (UIWindow *window in windows)
+    {
+        /*
+         * Chỉ scale root window phù hợp.
+         *
+         * Tránh transform toàn bộ system windows.
+         */
+        NSString *className =
+            NSStringFromClass(window.class);
+
+        if ([className containsString:@"UIRootSceneWindow"])
+        {
+            SC16ApplyScaleToWindow(window);
             continue;
-
-        UIWindowScene *ws =
-            (UIWindowScene *)scene;
-
-        if (ws.activationState ==
-            UISceneActivationStateUnattached)
-            continue;
-
-        NSArray *windows =
-            ws.windows;
+        }
 
         /*
-         * Chỉ lấy window hệ thống.
+         * Một số phiên bản SpringBoard có thể dùng
+         * UIWindow trực tiếp.
          *
-         * Không scale app windows.
+         * Chỉ cho phép window có rootViewController
+         * và không thuộc nhóm system overlay.
          */
-        for (UIWindow *window in windows)
+        if ([className isEqualToString:@"UIWindow"])
         {
-            NSString *name =
-                NSStringFromClass(window.class);
-
-            if ([name isEqualToString:@"UIRootSceneWindow"])
-            {
-                SC16ApplyTransformToWindow(window);
-            }
+            SC16ApplyScaleToWindow(window);
         }
     }
 }
 
-#pragma mark - Rotation / layout
+#pragma mark - Apply All Scenes
 
-static void SC16ScheduleApply(void)
+static void SC16ApplyAllScenes(void)
 {
     if (!SC16Enabled())
+        return;
+
+    if (!SC16IsSpringBoard())
+        return;
+
+    UIApplication *application =
+        UIApplication.sharedApplication;
+
+    NSSet<UIScene *> *connectedScenes =
+        application.connectedScenes;
+
+    for (UIScene *scene in connectedScenes)
+    {
+        if (![scene isKindOfClass:[UIWindowScene class]])
+            continue;
+
+        SC16ApplyScene(
+            (UIWindowScene *)scene
+        );
+    }
+}
+
+#pragma mark - Refresh
+
+static void SC16Refresh(void)
+{
+    if (!SC16Enabled())
+        return;
+
+    if (!SC16IsSpringBoard())
         return;
 
     dispatch_async(
         dispatch_get_main_queue(),
         ^{
-            SC16ApplySystemWindows();
-
-            dispatch_after(
-                dispatch_time(
-                    DISPATCH_TIME_NOW,
-                    (int64_t)(
-                        0.15 *
-                        NSEC_PER_SEC
-                    )
-                ),
-                dispatch_get_main_queue(),
-                ^{
-                    SC16ApplySystemWindows();
-                }
-            );
+            SC16ApplyAllScenes();
         }
     );
 }
 
-#pragma mark - System root window
+#pragma mark - UIWindow Hooks
 
-%hook UIRootSceneWindow
+%hook UIWindow
 
-- (void)layoutSubviews
+- (void)makeKeyAndVisible
 {
     %orig;
 
     if (!SC16Enabled())
         return;
 
-    /*
-     * UIKit vừa layout xong thì áp scale lại.
-     */
-    static BOOL applying = NO;
-
-    if (applying)
+    if (!SC16IsSpringBoard())
         return;
-
-    applying = YES;
 
     dispatch_async(
         dispatch_get_main_queue(),
         ^{
-            SC16ApplyTransformToWindow(self);
-
-            applying = NO;
+            SC16ApplyScaleToWindow(self);
         }
     );
 }
 
-- (void)setFrame:(CGRect)frame
+- (void)setRootViewController:
+    (UIViewController *)rootViewController
 {
-    %orig(frame);
+    %orig(rootViewController);
 
     if (!SC16Enabled())
         return;
 
-    SC16ScheduleApply();
+    if (!SC16IsSpringBoard())
+        return;
+
+    dispatch_async(
+        dispatch_get_main_queue(),
+        ^{
+            SC16ApplyScaleToWindow(self);
+        }
+    );
 }
 
-- (void)setBounds:(CGRect)bounds
+- (void)setHidden:(BOOL)hidden
 {
-    %orig(bounds);
+    %orig(hidden);
 
     if (!SC16Enabled())
         return;
 
-    SC16ScheduleApply();
+    if (!SC16IsSpringBoard())
+        return;
+
+    if (hidden)
+        return;
+
+    dispatch_async(
+        dispatch_get_main_queue(),
+        ^{
+            SC16ApplyScaleToWindow(self);
+        }
+    );
 }
 
 %end
 
-#pragma mark - UIApplication lifecycle
+#pragma mark - Orientation
 
-%hook UIApplication
+%hook UIWindowScene
 
-- (void)applicationDidBecomeActive:
-    (UIApplication *)application
+- (void)sceneDidBecomeActive:(UIScene *)scene
 {
-    %orig(application);
+    %orig(scene);
 
     if (!SC16Enabled())
         return;
 
-    SC16ScheduleApply();
+    if (!SC16IsSpringBoard())
+        return;
+
+    dispatch_async(
+        dispatch_get_main_queue(),
+        ^{
+            SC16ApplyScene(self);
+        }
+    );
+}
+
+%end
+
+#pragma mark - Root View Layout
+
+%hook UIView
+
+- (void)didMoveToWindow
+{
+    %orig;
+
+    if (!SC16Enabled())
+        return;
+
+    if (!SC16IsSpringBoard())
+        return;
+
+    UIWindow *window =
+        self.window;
+
+    if (!window)
+        return;
+
+    UIViewController *root =
+        window.rootViewController;
+
+    if (!root)
+        return;
+
+    /*
+     * Chỉ refresh khi đây thực sự là root view.
+     *
+     * Không transform từng UIView con.
+     */
+    if (self != root.view)
+        return;
+
+    dispatch_async(
+        dispatch_get_main_queue(),
+        ^{
+            SC16ApplyScaleToWindow(window);
+        }
+    );
 }
 
 %end
@@ -361,50 +484,58 @@ static void SC16ScheduleApply(void)
     @autoreleasepool
     {
         /*
-         * QUAN TRỌNG:
+         * Không load vào app thường.
          *
-         * Tweak chỉ chạy phần scale trong
-         * SpringBoard.
-         *
-         * Các app bình thường không bị
-         * transform root view.
+         * Đây là điểm quan trọng để tránh Safe Mode
+         * do tweak can thiệp vào UIKit của mọi process.
          */
-        if (!SC16IsSpringBoard())
-            return;
-
         if (!SC16Enabled())
             return;
 
-        dispatch_once(
-            &(static dispatch_once_t){0},
-            ^{
-                SC16ScheduleApply();
+        if (!SC16IsSpringBoard())
+            return;
 
+        /*
+         * UIKit phải được khởi tạo xong trước khi
+         * truy cập connectedScenes.
+         */
+        dispatch_async(
+            dispatch_get_main_queue(),
+            ^{
+                SC16ApplyAllScenes();
+
+                /*
+                 * Refresh sau khi SpringBoard hoàn thành
+                 * layout/window setup.
+                 */
                 dispatch_after(
                     dispatch_time(
                         DISPATCH_TIME_NOW,
                         (int64_t)(
-                            0.5 *
+                            0.25 *
                             NSEC_PER_SEC
                         )
                     ),
                     dispatch_get_main_queue(),
                     ^{
-                        SC16ApplySystemWindows();
+                        SC16ApplyAllScenes();
                     }
                 );
 
+                /*
+                 * Một lần cuối sau khi UI ổn định.
+                 */
                 dispatch_after(
                     dispatch_time(
                         DISPATCH_TIME_NOW,
                         (int64_t)(
-                            1.5 *
+                            1.0 *
                             NSEC_PER_SEC
                         )
                     ),
                     dispatch_get_main_queue(),
                     ^{
-                        SC16ApplySystemWindows();
+                        SC16ApplyAllScenes();
                     }
                 );
             }
