@@ -1,6 +1,6 @@
 Package: com.tutu.screenscale16
 Name: ScreenScale16
-Version: 1.1.5
+Version: 1.1.6
 Architecture: iphoneos-arm64
 Description: Independent iOS 16 screen scale tweak with 34pt top/bottom portrait crop.
 Maintainer: Tú Tú
