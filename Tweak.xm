@@ -1,24 +1,17 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
-#import <objc/message.h>
-#import <math.h>
 
 #pragma mark - Configuration
 
 /*
- * ============================
- * SCALE — ĐỘC LẬP
- * ============================
+ * SCALE RIÊNG
  *
  * 0.96 = 96%
  */
-static const CGFloat SC16_SCALE = 0.96;
-
+static CGFloat const SC16_SCALE = 0.96;
 
 /*
- * ============================
- * CROP — ĐỘC LẬP
- * ============================
+ * CROP RIÊNG
  *
  * Portrait:
  *     34px trên
@@ -27,22 +20,19 @@ static const CGFloat SC16_SCALE = 0.96;
  * Landscape:
  *     34px trái
  *     34px phải
- *
- * Giá trị này KHÔNG phải scale.
  */
-static const CGFloat SC16_CROP = 34.0;
+static CGFloat const SC16_CROP = 34.0;
 
 
 #pragma mark - Process
 
-static BOOL SC16Enabled(void)
+static BOOL SC16IsEnabled(void)
 {
     NSString *version =
         UIDevice.currentDevice.systemVersion;
 
     return [version hasPrefix:@"16."];
 }
-
 
 static BOOL SC16IsSpringBoard(void)
 {
@@ -61,178 +51,79 @@ static BOOL SC16IsKeyboardWindow(UIWindow *window)
     if (!window)
         return YES;
 
-    NSString *name =
+    NSString *className =
         NSStringFromClass(window.class);
 
-    if ([name rangeOfString:@"Keyboard"
-                    options:NSCaseInsensitiveSearch].location != NSNotFound)
+    if ([className containsString:@"Keyboard"])
         return YES;
 
-    if ([name rangeOfString:@"UITextEffects"
-                    options:NSCaseInsensitiveSearch].location != NSNotFound)
+    if ([className containsString:@"UITextEffects"])
         return YES;
 
-    if ([name rangeOfString:@"UIRemoteKeyboard"
-                    options:NSCaseInsensitiveSearch].location != NSNotFound)
+    if ([className containsString:@"UIRemoteKeyboard"])
+        return YES;
+
+    if ([className containsString:@"UIInput"])
         return YES;
 
     return NO;
 }
-
-
-static BOOL SC16IsStatusBarWindow(UIWindow *window)
-{
-    if (!window)
-        return YES;
-
-    NSString *name =
-        NSStringFromClass(window.class);
-
-    if ([name rangeOfString:@"StatusBar"
-                    options:NSCaseInsensitiveSearch].location != NSNotFound)
-        return YES;
-
-    if ([name rangeOfString:@"UIStatusBar"
-                    options:NSCaseInsensitiveSearch].location != NSNotFound)
-        return YES;
-
-    return NO;
-}
-
-
-static BOOL SC16IsAssistiveTouchWindow(UIWindow *window)
-{
-    if (!window)
-        return YES;
-
-    NSString *name =
-        NSStringFromClass(window.class);
-
-    if ([name rangeOfString:@"AssistiveTouch"
-                    options:NSCaseInsensitiveSearch].location != NSNotFound)
-        return YES;
-
-    return NO;
-}
-
 
 static BOOL SC16IsRootSceneWindow(UIWindow *window)
 {
     if (!window)
         return NO;
 
-    NSString *name =
+    NSString *className =
         NSStringFromClass(window.class);
 
-    return [name isEqualToString:
+    return [className isEqualToString:
                 @"UIRootSceneWindow"];
-}
-
-
-static BOOL SC16ShouldIgnoreWindow(UIWindow *window)
-{
-    if (!window)
-        return YES;
-
-    if (SC16IsKeyboardWindow(window))
-        return YES;
-
-    if (SC16IsStatusBarWindow(window))
-        return YES;
-
-    if (SC16IsAssistiveTouchWindow(window))
-        return YES;
-
-    return NO;
-}
-
-
-#pragma mark - Internal Windows
-
-static NSArray<UIWindow *> *SC16GetInternalWindows(void)
-{
-    Class windowClass =
-        objc_getClass("UIWindow");
-
-    if (!windowClass)
-        return @[];
-
-    SEL selector =
-        sel_registerName(
-            "allWindowsIncludingInternalWindows:onlyVisibleWindows:"
-        );
-
-    if (![windowClass respondsToSelector:selector])
-        return @[];
-
-    NSArray *windows =
-        ((NSArray *(*)(id, SEL, BOOL, BOOL))objc_msgSend)(
-            windowClass,
-            selector,
-            YES,
-            YES
-        );
-
-    if (![windows isKindOfClass:[NSArray class]])
-        return @[];
-
-    return windows;
 }
 
 
 #pragma mark - Geometry
 
 /*
- * Scale quanh tâm WINDOW.
+ * SCALE CHỈ SCALE.
  *
- * SCALE hoàn toàn độc lập với CROP.
+ * Không tự tính translation.
+ *
+ * UIView transform được áp dụng quanh center
+ * của chính UIView/window.
+ *
+ * Đây là điểm quan trọng để tránh:
+ *
+ * - lệch trái
+ * - lệch phải
+ * - lệch trên
+ * - lệch dưới
+ * - background đi một nơi
+ * - content đi một nơi
  */
-static CGAffineTransform SC16ScaleTransform(
-    CGRect bounds,
-    CGFloat scale
-)
+static CGAffineTransform SC16ScaleTransform(CGFloat scale)
 {
-    CGFloat centerX =
-        CGRectGetMidX(bounds);
-
-    CGFloat centerY =
-        CGRectGetMidY(bounds);
-
-    CGFloat tx =
-        centerX * (1.0 - scale);
-
-    CGFloat ty =
-        centerY * (1.0 - scale);
-
-    return CGAffineTransformMake(
+    return CGAffineTransformMakeScale(
         scale,
-        0.0,
-        0.0,
-        scale,
-        tx,
-        ty
+        scale
     );
 }
 
 
-#pragma mark - Crop Geometry
-
 /*
- * CROP được định nghĩa độc lập là 34px.
+ * Crop là một hệ riêng.
  *
- * Lưu ý:
- * mask nằm trong local coordinate của window,
- * trong khi window đã scale.
+ * Mask được tạo trong tọa độ gốc của window.
  *
- * Vì vậy cần quy đổi hình học nội bộ để phần bị cắt
- * trên MÀN HÌNH vẫn tương ứng với SC16_CROP.
+ * Vì toàn bộ window sau đó scale xuống 96%,
+ * để phần crop cuối cùng trên màn hình vẫn
+ * đúng 34px thì crop source phải bù scale:
  *
- * Điều này KHÔNG thay đổi SC16_CROP và KHÔNG biến crop
- * thành một phần của scale.
+ *     34 / 0.96
+ *
+ * Crop không được dùng để tính scale.
  */
-static CGRect SC16CropRect(
-    CGRect bounds
-)
+static CGRect SC16CropRect(CGRect bounds)
 {
     CGFloat width =
         CGRectGetWidth(bounds);
@@ -240,54 +131,47 @@ static CGRect SC16CropRect(
     CGFloat height =
         CGRectGetHeight(bounds);
 
-    CGFloat scale =
-        SC16_SCALE;
-
-    if (scale <= 0.0)
-        scale = 1.0;
+    BOOL portrait =
+        height > width;
 
     CGFloat sourceCrop =
-        SC16_CROP / scale;
-
-    BOOL portrait =
-        height >= width;
+        SC16_CROP / SC16_SCALE;
 
     if (portrait)
     {
-        CGFloat available =
-            height - 2.0 * sourceCrop;
-
-        if (available <= 1.0)
-            return CGRectZero;
-
         return CGRectMake(
             CGRectGetMinX(bounds),
             CGRectGetMinY(bounds) + sourceCrop,
             width,
-            available
+            height - (sourceCrop * 2.0)
         );
     }
-
-    CGFloat available =
-        width - 2.0 * sourceCrop;
-
-    if (available <= 1.0)
-        return CGRectZero;
 
     return CGRectMake(
         CGRectGetMinX(bounds) + sourceCrop,
         CGRectGetMinY(bounds),
-        available,
+        width - (sourceCrop * 2.0),
         height
     );
 }
 
 
-#pragma mark - Crop Mask
+#pragma mark - Crop
 
-static void SC16ApplyCropMask(
-    UIWindow *window
-)
+/*
+ * Tạo mask CROP riêng.
+ *
+ * Không thay:
+ *
+ * - frame
+ * - bounds
+ * - center
+ * - position
+ * - rootViewController
+ *
+ * Chỉ giới hạn vùng được render của window.
+ */
+static void SC16ApplyCrop(UIWindow *window)
 {
     if (!window)
         return;
@@ -301,47 +185,42 @@ static void SC16ApplyCropMask(
     CGRect bounds =
         layer.bounds;
 
-    if (CGRectGetWidth(bounds) <= 0.0 ||
-        CGRectGetHeight(bounds) <= 0.0)
+    CGFloat width =
+        CGRectGetWidth(bounds);
+
+    CGFloat height =
+        CGRectGetHeight(bounds);
+
+    if (width <= 0.0 ||
+        height <= 0.0)
     {
         return;
-    }
-
-    /*
-     * Nếu layer đã có mask không phải của chúng ta,
-     * không phá mask hệ thống.
-     */
-    if (layer.mask &&
-        ![layer.mask
-          isKindOfClass:
-              [CAShapeLayer class]])
-    {
-        return;
-    }
-
-    CAShapeLayer *mask = nil;
-
-    if ([layer.mask
-         isKindOfClass:
-             [CAShapeLayer class]])
-    {
-        mask =
-            (CAShapeLayer *)layer.mask;
-    }
-    else
-    {
-        mask =
-            [CAShapeLayer layer];
-
-        layer.mask =
-            mask;
     }
 
     CGRect cropRect =
         SC16CropRect(bounds);
 
-    if (CGRectIsEmpty(cropRect))
+    if (CGRectGetWidth(cropRect) <= 0.0 ||
+        CGRectGetHeight(cropRect) <= 0.0)
+    {
         return;
+    }
+
+    /*
+     * Tạo một CAShapeLayer duy nhất.
+     *
+     * Không tạo mask mới liên tục.
+     */
+    CAShapeLayer *mask =
+        (CAShapeLayer *)layer.mask;
+
+    if (![mask isKindOfClass:
+              [CAShapeLayer class]])
+    {
+        mask = [CAShapeLayer layer];
+
+        layer.mask = mask;
+    }
 
     mask.frame =
         bounds;
@@ -359,35 +238,9 @@ static void SC16ApplyCropMask(
 }
 
 
-#pragma mark - Remove Our Crop
+#pragma mark - Apply
 
-static void SC16RemoveCropMask(
-    UIWindow *window
-)
-{
-    if (!window)
-        return;
-
-    CALayer *layer =
-        window.layer;
-
-    if (!layer)
-        return;
-
-    if ([layer.mask
-         isKindOfClass:
-             [CAShapeLayer class]])
-    {
-        layer.mask = nil;
-    }
-}
-
-
-#pragma mark - Apply Root Window
-
-static void SC16ApplyRootWindow(
-    UIWindow *window
-)
+static void SC16ApplyToWindow(UIWindow *window)
 {
     if (!window)
         return;
@@ -398,7 +251,10 @@ static void SC16ApplyRootWindow(
     if (window.alpha <= 0.0)
         return;
 
-    if (SC16ShouldIgnoreWindow(window))
+    if (SC16IsKeyboardWindow(window))
+        return;
+
+    if (!window.rootViewController)
         return;
 
     CGRect bounds =
@@ -416,43 +272,6 @@ static void SC16ApplyRootWindow(
         return;
     }
 
-    /*
-     * ============================
-     * RESET
-     * ============================
-     *
-     * Tránh transform chồng:
-     *
-     * 0.96
-     * 0.9216
-     * 0.884736
-     * ...
-     */
-    window.transform =
-        CGAffineTransformIdentity;
-
-
-    /*
-     * ============================
-     * CROP
-     * ============================
-     *
-     * Crop là thao tác riêng.
-     */
-    SC16ApplyCropMask(window);
-
-
-    /*
-     * ============================
-     * SCALE
-     * ============================
-     *
-     * Scale là thao tác riêng.
-     *
-     * Không thay frame.
-     * Không thay bounds.
-     * Không thay center.
-     */
     CGFloat scale =
         SC16_SCALE;
 
@@ -462,63 +281,51 @@ static void SC16ApplyRootWindow(
         scale = 1.0;
     }
 
+    /*
+     * RESET trước để tránh scale chồng.
+     */
+    window.transform =
+        CGAffineTransformIdentity;
+
+    /*
+     * CROP hoàn toàn độc lập.
+     *
+     * Không dùng crop để tính transform.
+     */
+    SC16ApplyCrop(window);
+
+    /*
+     * SCALE hoàn toàn độc lập.
+     *
+     * CGAffineTransformMakeScale()
+     * tự scale quanh tâm của window.
+     *
+     * Không cộng tx / ty.
+     */
     if (fabs(scale - 1.0) > 0.0001)
     {
         window.transform =
-            SC16ScaleTransform(
-                bounds,
-                scale
-            );
+            SC16ScaleTransform(scale);
     }
 }
 
 
-#pragma mark - Find SpringBoard Root
+#pragma mark - SpringBoard Window
 
-static UIWindow *SC16FindRootWindow(void)
+static UIWindow *SC16FindSpringBoardWindow(void)
 {
-    if (!SC16IsSpringBoard())
-        return nil;
-
-    /*
-     * Ưu tiên internal window.
-     */
-    NSArray<UIWindow *> *windows =
-        SC16GetInternalWindows();
-
-    UIWindow *fallback =
-        nil;
-
-    for (UIWindow *window in windows)
-    {
-        if (!window)
-            continue;
-
-        if (window.hidden)
-            continue;
-
-        if (window.alpha <= 0.0)
-            continue;
-
-        if (SC16ShouldIgnoreWindow(window))
-            continue;
-
-        if (SC16IsRootSceneWindow(window))
-            return window;
-    }
-
-
-    /*
-     * Fallback qua scene.
-     */
     UIApplication *application =
         UIApplication.sharedApplication;
 
     if (!application)
         return nil;
 
-    for (UIScene *scene in
-         application.connectedScenes)
+    UIWindow *fallback = nil;
+
+    NSSet<UIScene *> *scenes =
+        application.connectedScenes;
+
+    for (UIScene *scene in scenes)
     {
         if (![scene
               isKindOfClass:
@@ -527,17 +334,17 @@ static UIWindow *SC16FindRootWindow(void)
             continue;
         }
 
-        UIWindowScene *sceneWindow =
+        UIWindowScene *windowScene =
             (UIWindowScene *)scene;
 
-        if (sceneWindow.activationState ==
+        if (windowScene.activationState ==
             UISceneActivationStateUnattached)
         {
             continue;
         }
 
         for (UIWindow *window in
-             sceneWindow.windows)
+             windowScene.windows)
         {
             if (!window)
                 continue;
@@ -548,14 +355,23 @@ static UIWindow *SC16FindRootWindow(void)
             if (window.alpha <= 0.0)
                 continue;
 
-            if (SC16ShouldIgnoreWindow(window))
+            if (SC16IsKeyboardWindow(window))
                 continue;
 
-            if (!window.rootViewController)
-                continue;
+            /*
+             * Ưu tiên đúng UIRootSceneWindow.
+             */
+            if (SC16IsRootSceneWindow(window))
+                return window;
 
-            if (!fallback)
+            /*
+             * Fallback.
+             */
+            if (!fallback &&
+                window.rootViewController)
+            {
                 fallback = window;
+            }
         }
     }
 
@@ -563,31 +379,21 @@ static UIWindow *SC16FindRootWindow(void)
 }
 
 
-#pragma mark - SpringBoard Apply
-
 static void SC16ApplySpringBoard(void)
 {
-    if (!SC16Enabled())
+    if (!SC16IsEnabled())
         return;
 
     if (!SC16IsSpringBoard())
         return;
 
-    UIWindow *rootWindow =
-        SC16FindRootWindow();
+    UIWindow *window =
+        SC16FindSpringBoardWindow();
 
-    if (!rootWindow)
+    if (!window)
         return;
 
-    /*
-     * Chỉ scale ROOT WINDOW.
-     *
-     * Wallpaper/UI/overlay nằm trong cùng hierarchy
-     * sẽ cùng di chuyển và cùng scale.
-     */
-    SC16ApplyRootWindow(
-        rootWindow
-    );
+    SC16ApplyToWindow(window);
 }
 
 
@@ -600,11 +406,9 @@ static UIWindow *SC16FindApplicationWindow(
     if (!scene)
         return nil;
 
-    UIWindow *fallback =
-        nil;
+    UIWindow *fallback = nil;
 
-    for (UIWindow *window in
-         scene.windows)
+    for (UIWindow *window in scene.windows)
     {
         if (!window)
             continue;
@@ -615,12 +419,15 @@ static UIWindow *SC16FindApplicationWindow(
         if (window.alpha <= 0.0)
             continue;
 
-        if (SC16ShouldIgnoreWindow(window))
+        if (SC16IsKeyboardWindow(window))
             continue;
 
         if (!window.rootViewController)
             continue;
 
+        /*
+         * Ưu tiên key window.
+         */
         if (window.isKeyWindow)
             return window;
 
@@ -636,16 +443,13 @@ static void SC16ApplyApplicationScene(
     UIWindowScene *scene
 )
 {
-    if (!scene)
-        return;
-
     UIWindow *window =
         SC16FindApplicationWindow(scene);
 
     if (!window)
         return;
 
-    SC16ApplyRootWindow(window);
+    SC16ApplyToWindow(window);
 }
 
 
@@ -664,21 +468,31 @@ static void SC16ApplyScene(
         return;
     }
 
+    /*
+     * SpringBoard:
+     *
+     * Chỉ xử lý root window.
+     */
     if (SC16IsSpringBoard())
     {
         SC16ApplySpringBoard();
         return;
     }
 
+    /*
+     * App:
+     *
+     * Chỉ xử lý window chính.
+     */
     SC16ApplyApplicationScene(scene);
 }
 
 
-#pragma mark - Apply All
+#pragma mark - Apply All Scenes
 
 static void SC16ApplyAllScenes(void)
 {
-    if (!SC16Enabled())
+    if (!SC16IsEnabled())
         return;
 
     UIApplication *application =
@@ -687,22 +501,10 @@ static void SC16ApplyAllScenes(void)
     if (!application)
         return;
 
+    NSSet<UIScene *> *scenes =
+        application.connectedScenes;
 
-    /*
-     * SpringBoard chỉ xử lý root window một lần.
-     */
-    if (SC16IsSpringBoard())
-    {
-        SC16ApplySpringBoard();
-        return;
-    }
-
-
-    /*
-     * App bình thường.
-     */
-    for (UIScene *scene in
-         application.connectedScenes)
+    for (UIScene *scene in scenes)
     {
         if (![scene
               isKindOfClass:
@@ -718,27 +520,24 @@ static void SC16ApplyAllScenes(void)
 }
 
 
-#pragma mark - Scheduling
+#pragma mark - Safe Scheduling
 
 static void SC16ScheduleApply(void)
 {
-    if (!SC16Enabled())
+    if (!SC16IsEnabled())
         return;
 
-    static BOOL scheduled =
-        NO;
+    static BOOL scheduled = NO;
 
     if (scheduled)
         return;
 
-    scheduled =
-        YES;
+    scheduled = YES;
 
     dispatch_async(
         dispatch_get_main_queue(),
         ^{
-            scheduled =
-                NO;
+            scheduled = NO;
 
             SC16ApplyAllScenes();
         }
@@ -754,36 +553,33 @@ static void SC16ScheduleApply(void)
 {
     %orig;
 
-    if (!SC16Enabled())
+    if (!SC16IsEnabled())
         return;
 
     SC16ScheduleApply();
 }
-
-
-- (void)setHidden:(BOOL)hidden
-{
-    %orig(hidden);
-
-    if (!SC16Enabled())
-        return;
-
-    if (!hidden)
-        SC16ScheduleApply();
-}
-
 
 - (void)setRootViewController:
     (UIViewController *)rootViewController
 {
     %orig(rootViewController);
 
-    if (!SC16Enabled())
+    if (!SC16IsEnabled())
         return;
 
     SC16ScheduleApply();
 }
 
+- (void)setHidden:(BOOL)hidden
+{
+    %orig(hidden);
+
+    if (!SC16IsEnabled())
+        return;
+
+    if (!hidden)
+        SC16ScheduleApply();
+}
 
 %end
 
@@ -796,12 +592,11 @@ static void SC16ScheduleApply(void)
 {
     %orig;
 
-    if (!SC16Enabled())
+    if (!SC16IsEnabled())
         return;
 
     SC16ScheduleApply();
 }
-
 
 %end
 
@@ -812,18 +607,11 @@ static void SC16ScheduleApply(void)
 {
     @autoreleasepool
     {
-        if (!SC16Enabled())
+        if (!SC16IsEnabled())
             return;
 
         /*
-         * Chỉ chạy trong SpringBoard.
-         */
-        if (!SC16IsSpringBoard())
-            return;
-
-
-        /*
-         * UIKit/SpringBoard cần thời gian tạo root window.
+         * Chờ UIKit/SpringBoard dựng scene xong.
          */
         dispatch_after(
             dispatch_time(
@@ -835,43 +623,7 @@ static void SC16ScheduleApply(void)
             ),
             dispatch_get_main_queue(),
             ^{
-                SC16ApplySpringBoard();
-            }
-        );
-
-
-        /*
-         * Re-apply sau khi SpringBoard hoàn tất layout.
-         *
-         * Mỗi lần đều reset transform trước,
-         * nên không bị scale chồng.
-         */
-        dispatch_after(
-            dispatch_time(
-                DISPATCH_TIME_NOW,
-                (int64_t)(
-                    1.5 *
-                    NSEC_PER_SEC
-                )
-            ),
-            dispatch_get_main_queue(),
-            ^{
-                SC16ApplySpringBoard();
-            }
-        );
-
-
-        dispatch_after(
-            dispatch_time(
-                DISPATCH_TIME_NOW,
-                (int64_t)(
-                    3.0 *
-                    NSEC_PER_SEC
-                )
-            ),
-            dispatch_get_main_queue(),
-            ^{
-                SC16ApplySpringBoard();
+                SC16ApplyAllScenes();
             }
         );
     }
